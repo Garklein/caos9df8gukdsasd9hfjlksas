@@ -4,6 +4,8 @@ module Main where
 
 import Data.Bool
 import Codec.BMP
+import Data.Functor
+import Data.Foldable
 import Data.Function
 import Graphics.Gloss
 import Data.Traversable
@@ -18,16 +20,21 @@ import Graphics.Gloss.Interface.IO.Interact
 infixr 7 .:
 
 
-data Chessman = Pawn
-              | Rook
-              | Horsey
-              | Bishop
-              | Queen
-              | King
+data Chessman
+  = Pawn
+  | Rook
+  | Horsey
+  | Bishop
+  | Queen
+  | King
   deriving (Eq, Ord)
 data Piece = White Chessman | Black Chessman | Empty
   deriving (Eq, Ord)
 type Board = V.Vector (V.Vector Piece)
+data World = World
+  { board    :: Board
+  , selected :: Maybe (Int, Int)
+  }
 
 q :: Float -- half the width of the board
 q = 300
@@ -35,29 +42,29 @@ q = 300
 square :: Float -> Float -> Float -> Path
 square x y w = [(x, y), (x+w, y), (x+w, y+w), (x, y+w), (x, y)]
 
-drawBoard :: M.Map Piece Picture -> Board -> Picture
-drawBoard imgs board = Pictures $ liftA2 draw [0..7] [0..7]
+drawBoard :: M.Map Piece Picture -> World -> Picture
+drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
   where
-    draw :: Int -> Int -> Picture
-    draw   x y        = Pictures $ (\f -> f x y (coord x) (coord y)) <$> [tile, img]
-    coord             = (- q) . (* (q/4)) . fromIntegral
-    img    x y cX cY  = Translate (cX + q/8) (cY + q/8) $ getImg x y
-    getImg x y        = case board V.! y V.! x of
-                          Empty -> Pictures []
-                          p     -> imgs M.! p
-    tile   x y cX cY  = colour x y . polygon $ square cX cY (q/4)
-    colour            = Color . bool white (light $ light blue) . odd . fromEnum .: (+)
+    draw  x y = [tile, img] <&> \f -> f x y (coord x) (coord y)
+    coord n   = fromIntegral n * (q / 4) - q
+
+    getImg x y = case board world V.! y V.! x of
+                   Empty -> Blank
+                   p     -> imgs M.! p
+    img    x y cX cY = Translate (cX + q/8) (cY + q/8) (getImg x y)
+    tile   x y cX cY = colour x y . polygon $ square cX cY (q/4)
+    colour = Color . bool white (light $ light blue) . odd . fromEnum .: (+)
 
 border :: Picture
 border = Line $ square -q -q (q*2)
 
-convert :: M.Map Piece Picture -> Board -> Picture
+convert :: M.Map Piece Picture -> World -> Picture
 convert imgs board = Pictures [drawBoard imgs board, border]
 
-events :: Event -> Board -> Board
+events :: Event -> World -> World
 events _ = id
 
-step :: Float -> Board -> Board
+step :: Float -> World -> World
 step _ = id
 
 home :: V.Vector Chessman
@@ -89,8 +96,9 @@ main = do
   imgs <- for imgNames $ \name -> loadBMP $ path <> name <> ".bmp"
   Right bmp <- readBMP $ path <> "kd.bmp"
 
-  let factor = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
+  let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs
-      window = InWindow "caos9df8gukdsasd9hfjlksas!!!" (200, 200) (10, 10)
+      window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (200, 200) (10, 10)
+      world      = World { board = start, selected = Nothing }
 
-  play window white 0 start (convert . M.fromList $ zip pieceOrder scaledImgs) events step
+  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events step

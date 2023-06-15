@@ -27,19 +27,6 @@ data Chessman = Pawn
   deriving (Eq, Ord)
 data Piece = White Chessman | Black Chessman | Empty
   deriving (Eq, Ord)
-
---instance Eq Piece where
---  Empty   == Empty    =  True
---  White x == White y  =  x == y
---  Black x == Black y  =  x == y
---instance Ord Piece where
---  compare (White x) (White y) = compare x y
---  compare (White _) _ = GT
---  compare (Black x) (Black y) = compare x y
---  compare (Black kk
---  compare Empty Empty = EQ
---  compare _ _ = EQ
-
 type Board = V.Vector (V.Vector Piece)
 
 q :: Float -- half the width of the board

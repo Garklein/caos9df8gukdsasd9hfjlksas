@@ -72,6 +72,7 @@ executable caos9df8gukdsasd9hfjlksas
                     , vector
                     , directory
                     , bmp
+                    , containers
 
     -- Directories containing source files.
     hs-source-dirs:   app

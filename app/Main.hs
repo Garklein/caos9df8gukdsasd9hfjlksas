@@ -59,13 +59,33 @@ border :: Picture
 border = Line $ square -q -q (q*2)
 
 convert :: M.Map Piece Picture -> World -> Picture
-convert imgs board = Pictures [drawBoard imgs board, border]
+convert imgs world = Pictures [drawBoard imgs world, border]
+
+getCoords :: (Float, Float) -> Maybe (Int, Int)
+getCoords (mX, mY) = if valid x && valid y then Just (x, y) else Nothing
+  where
+    x = coordToSquare mX
+    y = coordToSquare mY
+    coordToSquare c = 4 + floor (c / (q / 4))
+    valid s = 0 <= s && s < 8
+
+change :: (Int, Int) -> a -> (V.Vector (V.Vector a)) -> V.Vector (V.Vector a)
+change (x, y) a v = v V.// [(y, row)]
+  where row = (v V.! y) V.// [(x, a)]
+
+move :: (Int, Int) -> (Int, Int) -> Board -> Board
+move (sX, sY) (eX, eY) board = change (eX, eY) piece $ change (sX, sY) Empty board
+  where piece = board V.! sY V.! sX
 
 events :: Event -> World -> World
-events _ = id
+events (EventKey (MouseButton LeftButton) Down _ mouse) world =
+  case (selected world, getCoords mouse) of
+    (Just s, Just e) -> world { selected = Nothing, board = move s e $ board world }
+    (_, Nothing)                   -> world
+    (_, c)                         -> world { selected = c }
+    -- todo fix moving nothing somewhere, moving to same square
+events _ world = world
 
-step :: Float -> World -> World
-step _ = id
 
 home :: V.Vector Chessman
 home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
@@ -101,4 +121,4 @@ main = do
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (200, 200) (10, 10)
       world      = World { board = start, selected = Nothing }
 
-  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events step
+  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const

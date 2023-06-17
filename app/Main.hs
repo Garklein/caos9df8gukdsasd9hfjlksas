@@ -32,8 +32,9 @@ data Piece = White Chessman | Black Chessman | Empty
   deriving (Eq, Ord)
 type Board = V.Vector (V.Vector Piece)
 data World = World
-  { board    :: Board
-  , selected :: Maybe (Int, Int)
+  { board     :: Board
+  , selected  :: Maybe (Int, Int)
+  , whiteTurn :: Bool
   }
 
 q :: Float -- half the width of the board
@@ -77,14 +78,24 @@ change (x, y) a v = v V.// [(y, row)]
   where row = (v V.! y) V.// [(x, a)]
 
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
-move (sX, sY) (eX, eY) board = change (eX, eY) piece $ change (sX, sY) Empty board
-  where piece = board V.! sY V.! sX
+move s e board = change e piece $ change s Empty board
+  where piece = board V.! snd s V.! fst s
 
 events :: Event -> World -> World
 events (EventKey (MouseButton LeftButton) Down _ mouse) world =
   case (selected world, getCoords mouse) of
-    (Just s, Just e) -> world { selected = Nothing, board = (if s == e then id else move s e) $ board world }
-    (_, Just c)      -> if (get c $ board world) == Empty then world else world { selected = Just c }
+    (s, Just c) -> case s of
+                     Nothing -> case (piece, turn) of
+                       (White _, True)  -> world { selected = Just c }
+                       (Black _, False) -> world { selected = Just c }
+                       (_,    _)        -> world
+                     Just s -> if s == c then noS else noS { board = move s c b, whiteTurn = not turn }
+                       where
+                         noS = world { selected = Nothing }
+      where
+        turn = whiteTurn world
+        piece = b V.! snd c V.! fst c
+        b = board world
     _                -> world
 events _ world = world
 
@@ -121,6 +132,6 @@ main = do
   let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (200, 200) (10, 10)
-      world      = World { board = start, selected = Nothing }
+      world      = World { board = start, selected = Nothing, whiteTurn = True }
 
   play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const

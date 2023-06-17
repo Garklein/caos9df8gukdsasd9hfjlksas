@@ -20,6 +20,11 @@ import Graphics.Gloss.Interface.IO.Interact
 infixr 7 .:
 
 
+data Colour = White | Black deriving (Eq, Ord)
+invert :: Colour -> Colour
+invert Black = White
+invert White = Black
+
 data Chessman
   = Pawn
   | Rook
@@ -28,13 +33,13 @@ data Chessman
   | Queen
   | King
   deriving (Eq, Ord)
-data Piece = White Chessman | Black Chessman | Empty
+data Piece = Piece Colour Chessman | Empty
   deriving (Eq, Ord)
 type Board = V.Vector (V.Vector Piece)
 data World = World
-  { board     :: Board
-  , selected  :: Maybe (Int, Int)
-  , whiteTurn :: Bool
+  { board    :: Board
+  , selected :: Maybe (Int, Int)
+  , turn     :: Colour
   }
 
 q :: Float -- half the width of the board
@@ -84,24 +89,22 @@ move s e board = change e piece $ change s Empty board
 
 -- todo REFACTORRRRR
 events :: Event -> World -> World
-events (EventKey (MouseButton LeftButton) Down _ mouse) world =
-  case (selected world, getCoords mouse) of
+events (EventKey (MouseButton LeftButton) Down _ mouse) world@(World { board = b, selected = sel, turn = t }) =
+  case (sel, getCoords mouse) of
     (s, Just c) -> case s of
-                     Nothing -> case (piece, turn) of
-                       (White _, True)  -> sel
-                       (Black _, False) -> sel
-                       (_,    _)        -> world
-                       where sel = world { selected = Just c }
-                     Just s -> if s == c then desel else desel { board = move s c b, whiteTurn = not turn }
+                     Nothing -> case piece of
+                       Piece colour _ -> if colour == t then selIt else world
+                       _              -> world
+                       where selIt = world { selected = Just c }
+                     Just s -> if s == c then desel else desel { board = move s c b, turn = invert t }
                        where desel = world { selected = Nothing }
       where
-        turn = whiteTurn world
         piece = b V.! snd c V.! fst c
-        b = board world
     _                -> world
-events (EventKey (MouseButton LeftButton) Up _ mouse) world@(World { board = b, selected = Just s, whiteTurn = turn }) = case getCoords mouse of
-  Just e -> if s == e then world else world { selected = Nothing, board = move s e b, whiteTurn = not turn }
-  Nothing -> world
+events (EventKey (MouseButton LeftButton) Up _ mouse) world@(World { board = b, selected = Just s, turn = t }) =
+  case getCoords mouse of
+    Just e -> if s == e then world else world { selected = Nothing, board = move s e b, turn = invert t }
+    Nothing -> world
 events _ world = world
 
 
@@ -110,14 +113,14 @@ home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board
 start = V.fromList
-  [ Black <$> home
-  , V.replicate 8 $ Black Pawn
+  [ Piece Black <$> home
+  , V.replicate 8 $ Piece Black Pawn
   , empty
   , empty
   , empty
   , empty
-  , V.replicate 8 $ White Pawn
-  , White <$> home
+  , V.replicate 8 $ Piece White Pawn
+  , Piece White <$> home
   ]
   where empty = V.replicate 8 Empty
 
@@ -125,7 +128,7 @@ imgNames :: [String]
 imgNames = liftA2 (\p c -> [p, c]) "kqrnbp" "dl"
 
 pieceOrder :: [Piece]
-pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Black, White]
+pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Piece Black, Piece White]
 
 
 main :: IO ()
@@ -136,7 +139,8 @@ main = do
 
   let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs
-      window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (200, 200) (10, 10)
-      world      = World { board = start, selected = Nothing, whiteTurn = True }
+      w          = round $ q*2
+      window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (w, w) (10, 10)
+      world      = World { board = start, selected = Nothing, turn = White }
 
   play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const

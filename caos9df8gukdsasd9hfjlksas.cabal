@@ -73,6 +73,7 @@ executable caos9df8gukdsasd9hfjlksas
                     , directory
                     , bmp
                     , containers
+                    , mtl
 
     -- Directories containing source files.
     hs-source-dirs:   app

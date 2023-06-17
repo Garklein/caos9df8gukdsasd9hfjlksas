@@ -10,6 +10,7 @@ import Data.Function
 import Graphics.Gloss
 import Data.Traversable
 import System.Directory
+import Control.Monad.State
 import Data.Map qualified as M
 import Data.Vector qualified as V
 import Graphics.Gloss.Interface.IO.Interact
@@ -98,7 +99,7 @@ events
         Piece colour _ -> if colour == t
           then world { selected = Just c } -- clicked on right colour piece, select it
           else world                       -- clicked on wrong colour piece
-        _ -> world
+        _ -> world -- clicked on empty tile
       Just s -> if s == c
         then desel -- clicked same square twice, just deselect and don't change turn
         else desel { board = move s c b, turn = invert t } -- moving from square to diff square, move + change turn
@@ -114,8 +115,9 @@ events
       then world -- dragging from square to itself, keep square selected
       else world { selected = Nothing, board = move s e b, turn = invert t } -- dragging from square to another square, move
     Nothing -> world
-events _ world = worldhome :: V.Vector Chessman
+events _ world = world
 
+home :: V.Vector Chessman
 home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board

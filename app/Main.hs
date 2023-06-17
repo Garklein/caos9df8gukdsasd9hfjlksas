@@ -86,12 +86,12 @@ events (EventKey (MouseButton LeftButton) Down _ mouse) world =
   case (selected world, getCoords mouse) of
     (s, Just c) -> case s of
                      Nothing -> case (piece, turn) of
-                       (White _, True)  -> world { selected = Just c }
-                       (Black _, False) -> world { selected = Just c }
+                       (White _, True)  -> sel
+                       (Black _, False) -> sel
                        (_,    _)        -> world
+                       where sel = world { selected = Just c }
                      Just s -> if s == c then noS else noS { board = move s c b, whiteTurn = not turn }
-                       where
-                         noS = world { selected = Nothing }
+                       where noS = world { selected = Nothing }
       where
         turn = whiteTurn world
         piece = b V.! snd c V.! fst c

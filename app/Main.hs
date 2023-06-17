@@ -89,26 +89,33 @@ move s e board = change e piece $ change s Empty board
 
 -- todo REFACTORRRRR
 events :: Event -> World -> World
-events (EventKey (MouseButton LeftButton) Down _ mouse) world@(World { board = b, selected = sel, turn = t }) =
-  case (sel, getCoords mouse) of
+events
+  (EventKey (MouseButton LeftButton) Down _ mouse)
+  world@(World { board = b, selected = sel, turn = t })
+  = case (sel, getCoords mouse) of
     (s, Just c) -> case s of
-                     Nothing -> case piece of
-                       Piece colour _ -> if colour == t then selIt else world
-                       _              -> world
-                       where selIt = world { selected = Just c }
-                     Just s -> if s == c then desel else desel { board = move s c b, turn = invert t }
-                       where desel = world { selected = Nothing }
-      where
-        piece = b V.! snd c V.! fst c
-    _                -> world
-events (EventKey (MouseButton LeftButton) Up _ mouse) world@(World { board = b, selected = Just s, turn = t }) =
-  case getCoords mouse of
-    Just e -> if s == e then world else world { selected = Nothing, board = move s e b, turn = invert t }
+      Nothing -> case piece of
+        Piece colour _ -> if colour == t
+          then world { selected = Just c } -- clicked on right colour piece, select it
+          else world                       -- clicked on wrong colour piece
+        _ -> world
+      Just s -> if s == c
+        then desel -- clicked same square twice, just deselect and don't change turn
+        else desel { board = move s c b, turn = invert t } -- moving from square to diff square, move + change turn
+       where desel = world { selected = Nothing }
+     where
+      piece = b V.! snd c V.! fst c
+    _ -> world -- invalid click, do nothing
+events
+  (EventKey (MouseButton LeftButton) Up _ mouse)
+  world@(World { board = b, selected = Just s, turn = t })
+  = case getCoords mouse of
+    Just e -> if s == e
+      then world -- dragging from square to itself, keep square selected
+      else world { selected = Nothing, board = move s e b, turn = invert t } -- dragging from square to another square, move
     Nothing -> world
-events _ world = world
+events _ world = worldhome :: V.Vector Chessman
 
-
-home :: V.Vector Chessman
 home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board

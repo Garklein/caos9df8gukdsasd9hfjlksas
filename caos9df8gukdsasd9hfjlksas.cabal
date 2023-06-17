@@ -76,6 +76,7 @@ executable caos9df8gukdsasd9hfjlksas
                     , mtl
                     , microlens-mtl
                     , generic-lens
+                    , grid
 
     -- Directories containing source files.
     hs-source-dirs:   app

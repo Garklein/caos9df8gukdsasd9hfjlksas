@@ -8,6 +8,7 @@ module Main where
 
 import Data.Bool
 import Codec.BMP
+import Data.Tuple
 import Data.Functor
 import Data.Foldable
 import Control.Monad
@@ -17,10 +18,12 @@ import Graphics.Gloss
 import Data.Traversable
 import System.Directory
 import Control.Monad.State
-import Data.Generics.Labels
+import Math.Geometry.GridMap
+import Data.Generics.Labels()
 import GHC.Generics (Generic)
 import Data.Map qualified as M
-import Data.Vector qualified as V
+import Math.Geometry.GridMap.Lazy
+import Math.Geometry.Grid.Octagonal
 import Graphics.Gloss.Interface.IO.Interact
 
 
@@ -44,7 +47,7 @@ data Chessman
   deriving (Eq, Ord)
 data Piece = Piece Colour Chessman | Empty
   deriving (Eq, Ord)
-type Board = V.Vector (V.Vector Piece)
+type Board = LGridMap RectOctGrid Piece
 data World = World
   { board    :: Board
   , selected :: Maybe (Int, Int)
@@ -64,12 +67,12 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
     draw  x y = [tile, img] <&> \f -> f x y (coord x) (coord y)
     coord n   = fromIntegral n * (q / 4) - q
 
-    getImg x y = case board world V.! y V.! x of
+    getImg x y = case world.board ! (y, x) of
                    Empty -> Blank
                    p     -> imgs M.! p
     img    x y cX cY = Translate (cX + q/8) (cY + q/8) (getImg x y)
     tile   x y cX cY = colour x y . polygon $ square cX cY (q/4)
-    colour x y = Color . (if Just (x, y) == selected world then dark else id) $ baseColour x y
+    colour x y = Color . (if Just (x, y) == world.selected then dark else id) $ baseColour x y
     baseColour = bool white (light $ light blue) . odd . fromEnum .: (+)
 
 border :: Picture
@@ -86,22 +89,14 @@ getCoords (mX, mY) = if valid x && valid y then Just (x, y) else Nothing
     coordToSquare c = 4 + floor (c / (q / 4))
     valid s = 0 <= s && s < 8
 
-vGet :: (Int, Int) -> V.Vector (V.Vector a) -> a
-vGet (x, y) v = v V.! y V.! x
-
-change :: (Int, Int) -> a -> V.Vector (V.Vector a) -> V.Vector (V.Vector a)
-change (x, y) a v = v V.// [(y, row)]
-  where row = (v V.! y) V.// [(x, a)]
-
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
-move s e board = change e piece $ change s Empty board
-  where piece = board V.! snd s V.! fst s
+move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
 
 events :: Event -> State World ()
 events (EventKey (MouseButton LeftButton) keyState _ (getCoords -> Just click)) = do
   World board selected turn <- get
   case (keyState, selected) of
-    (Down, Nothing) -> case vGet click board of
+    (Down, Nothing) -> case board ! swap click of
       Piece colour _ | colour == turn -> #selected ?= click
       _ -> pure ()
     (Down, Just selection) -> do
@@ -109,28 +104,23 @@ events (EventKey (MouseButton LeftButton) keyState _ (getCoords -> Just click)) 
       unless (click == selection) do
         #board %= move selection click
         #turn  %= invert
-    (Up, Just selection) -> unless (click == selection) do
+    (Up, Just selection) | click /= selection -> do
       #selected .= Nothing
       #board    %= move selection click
       #turn     %= invert
     _ -> pure ()
 events _ = pure ()
 
-home :: V.Vector Chessman
-home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
+home :: [Chessman]
+home = [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board
-start = V.fromList
-  [ Piece Black <$> home
-  , V.replicate 8 $ Piece Black Pawn
-  , empty
-  , empty
-  , empty
-  , empty
-  , V.replicate 8 $ Piece White Pawn
-  , Piece White <$> home
-  ]
-  where empty = V.replicate 8 Empty
+start = lazyGridMap (rectOctGrid 8 8)
+  ((Piece Black <$> home)
+  <> (replicate 8 $ Piece Black Pawn)
+  <> (replicate 32 $ Empty)
+  <> (replicate 8 $ Piece White Pawn)
+  <> (Piece White <$> home))
 
 imgNames :: [String]
 imgNames = liftA2 (\p c -> [p, c]) "kqrnbp" "dl"

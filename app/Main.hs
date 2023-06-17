@@ -1,16 +1,24 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE LexicalNegation #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Main where
 
 import Data.Bool
 import Codec.BMP
 import Data.Functor
 import Data.Foldable
+import Control.Monad
 import Data.Function
+import Lens.Micro.Mtl
 import Graphics.Gloss
 import Data.Traversable
 import System.Directory
 import Control.Monad.State
+import Data.Generics.Labels
+import GHC.Generics (Generic)
 import Data.Map qualified as M
 import Data.Vector qualified as V
 import Graphics.Gloss.Interface.IO.Interact
@@ -42,6 +50,7 @@ data World = World
   , selected :: Maybe (Int, Int)
   , turn     :: Colour
   }
+  deriving Generic
 
 q :: Float -- half the width of the board
 q = 300
@@ -77,8 +86,8 @@ getCoords (mX, mY) = if valid x && valid y then Just (x, y) else Nothing
     coordToSquare c = 4 + floor (c / (q / 4))
     valid s = 0 <= s && s < 8
 
-get :: (Int, Int) -> V.Vector (V.Vector a) -> a
-get (x, y) v = v V.! y V.! x
+vGet :: (Int, Int) -> V.Vector (V.Vector a) -> a
+vGet (x, y) v = v V.! y V.! x
 
 change :: (Int, Int) -> a -> V.Vector (V.Vector a) -> V.Vector (V.Vector a)
 change (x, y) a v = v V.// [(y, row)]
@@ -88,34 +97,24 @@ move :: (Int, Int) -> (Int, Int) -> Board -> Board
 move s e board = change e piece $ change s Empty board
   where piece = board V.! snd s V.! fst s
 
--- todo REFACTORRRRR
-events :: Event -> World -> World
-events
-  (EventKey (MouseButton LeftButton) Down _ mouse)
-  world@(World { board = b, selected = sel, turn = t })
-  = case (sel, getCoords mouse) of
-    (s, Just c) -> case s of
-      Nothing -> case piece of
-        Piece colour _ -> if colour == t
-          then world { selected = Just c } -- clicked on right colour piece, select it
-          else world                       -- clicked on wrong colour piece
-        _ -> world -- clicked on empty tile
-      Just s -> if s == c
-        then desel -- clicked same square twice, just deselect and don't change turn
-        else desel { board = move s c b, turn = invert t } -- moving from square to diff square, move + change turn
-       where desel = world { selected = Nothing }
-     where
-      piece = b V.! snd c V.! fst c
-    _ -> world -- invalid click, do nothing
-events
-  (EventKey (MouseButton LeftButton) Up _ mouse)
-  world@(World { board = b, selected = Just s, turn = t })
-  = case getCoords mouse of
-    Just e -> if s == e
-      then world -- dragging from square to itself, keep square selected
-      else world { selected = Nothing, board = move s e b, turn = invert t } -- dragging from square to another square, move
-    Nothing -> world
-events _ world = world
+events :: Event -> State World ()
+events (EventKey (MouseButton LeftButton) keyState _ (getCoords -> Just click)) = do
+  World board selected turn <- get
+  case (keyState, selected) of
+    (Down, Nothing) -> case vGet click board of
+      Piece colour _ | colour == turn -> #selected ?= click
+      _ -> pure ()
+    (Down, Just selection) -> do
+      #selected .= Nothing
+      unless (click == selection) do
+        #board %= move selection click
+        #turn  %= invert
+    (Up, Just selection) -> unless (click == selection) do
+      #selected .= Nothing
+      #board    %= move selection click
+      #turn     %= invert
+    _ -> pure ()
+events _ = pure ()
 
 home :: V.Vector Chessman
 home = V.fromList [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
@@ -152,4 +151,4 @@ main = do
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (w, w) (10, 10)
       world      = World { board = start, selected = Nothing, turn = White }
 
-  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const
+  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) (execState . events) $ flip const

@@ -74,6 +74,8 @@ executable caos9df8gukdsasd9hfjlksas
                     , bmp
                     , containers
                     , mtl
+                    , microlens-mtl
+                    , generic-lens
 
     -- Directories containing source files.
     hs-source-dirs:   app

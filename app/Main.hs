@@ -54,7 +54,8 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
                    p     -> imgs M.! p
     img    x y cX cY = Translate (cX + q/8) (cY + q/8) (getImg x y)
     tile   x y cX cY = colour x y . polygon $ square cX cY (q/4)
-    colour = Color . bool white (light $ light blue) . odd . fromEnum .: (+)
+    colour x y = Color . (if Just (x, y) == selected world then dark else id) $ baseColour x y
+    baseColour = bool white (light $ light blue) . odd . fromEnum .: (+)
 
 border :: Picture
 border = Line $ square -q -q (q*2)
@@ -90,8 +91,8 @@ events (EventKey (MouseButton LeftButton) Down _ mouse) world =
                        (Black _, False) -> sel
                        (_,    _)        -> world
                        where sel = world { selected = Just c }
-                     Just s -> if s == c then noS else noS { board = move s c b, whiteTurn = not turn }
-                       where noS = world { selected = Nothing }
+                     Just s -> if s == c then desel else desel { board = move s c b, whiteTurn = not turn }
+                       where desel = world { selected = Nothing }
       where
         turn = whiteTurn world
         piece = b V.! snd c V.! fst c

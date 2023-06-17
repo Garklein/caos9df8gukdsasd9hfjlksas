@@ -82,6 +82,7 @@ move :: (Int, Int) -> (Int, Int) -> Board -> Board
 move s e board = change e piece $ change s Empty board
   where piece = board V.! snd s V.! fst s
 
+-- todo REFACTORRRRR
 events :: Event -> World -> World
 events (EventKey (MouseButton LeftButton) Down _ mouse) world =
   case (selected world, getCoords mouse) of
@@ -98,6 +99,9 @@ events (EventKey (MouseButton LeftButton) Down _ mouse) world =
         piece = b V.! snd c V.! fst c
         b = board world
     _                -> world
+events (EventKey (MouseButton LeftButton) Up _ mouse) world@(World { board = b, selected = Just s, whiteTurn = turn }) = case getCoords mouse of
+  Just e -> if s == e then world else world { selected = Nothing, board = move s e b, whiteTurn = not turn }
+  Nothing -> world
 events _ world = world
 
 

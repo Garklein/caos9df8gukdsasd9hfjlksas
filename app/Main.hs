@@ -69,7 +69,10 @@ getCoords (mX, mY) = if valid x && valid y then Just (x, y) else Nothing
     coordToSquare c = 4 + floor (c / (q / 4))
     valid s = 0 <= s && s < 8
 
-change :: (Int, Int) -> a -> (V.Vector (V.Vector a)) -> V.Vector (V.Vector a)
+get :: (Int, Int) -> V.Vector (V.Vector a) -> a
+get (x, y) v = v V.! y V.! x
+
+change :: (Int, Int) -> a -> V.Vector (V.Vector a) -> V.Vector (V.Vector a)
 change (x, y) a v = v V.// [(y, row)]
   where row = (v V.! y) V.// [(x, a)]
 
@@ -80,10 +83,9 @@ move (sX, sY) (eX, eY) board = change (eX, eY) piece $ change (sX, sY) Empty boa
 events :: Event -> World -> World
 events (EventKey (MouseButton LeftButton) Down _ mouse) world =
   case (selected world, getCoords mouse) of
-    (Just s, Just e) -> world { selected = Nothing, board = move s e $ board world }
-    (_, Nothing)                   -> world
-    (_, c)                         -> world { selected = c }
-    -- todo fix moving nothing somewhere, moving to same square
+    (Just s, Just e) -> world { selected = Nothing, board = (if s == e then id else move s e) $ board world }
+    (_, Just c)      -> if (get c $ board world) == Empty then world else world { selected = Just c }
+    _                -> world
 events _ world = world
 
 

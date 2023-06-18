@@ -102,13 +102,13 @@ validMoves (x, y) b =
   filter good $ case man of
     Horsey -> [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
     King   -> [(mX+x, mY+y) | mX <- [-1..1], mY <- [-1..1], mX /= 0 || mY /= 0]
-    Pawn   -> fold [ selectIf (x,   y+dir)   (Empty ==)
-                   , selectIf (x,   y+dir*2) $ (starting &&) . (Empty ==)
-                   , selectIf (x+1, y+dir)   . isCol $ other colour
-                   , selectIf (x-1, y+dir)   . isCol $ other colour
-                   ]
+    Pawn   -> [p | (p, f) <- cases, f $ b ! swap p]
       where
-        selectIf p f = if f $ b ! swap p then [p] else []
+        cases = [ ((x,   y+dir),   (Empty ==))
+                , ((x,   y+dir*2), (starting &&) . (Empty ==))
+                , ((x+1, y+dir),   isCol $ other colour)
+                , ((x-1, y+dir),   isCol $ other colour)
+                ]
         dir = if colour == Black then 1 else -1
         starting = y == case colour of
             White -> 6

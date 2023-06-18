@@ -81,22 +81,19 @@ border = Line $ square -q -q (q*2)
 convert :: M.Map Piece Picture -> World -> Picture
 convert imgs world = Pictures [drawBoard imgs world, border]
 
-getCoords :: (Float, Float) -> Maybe (Int, Int)
-getCoords (mX, mY) = if valid x && valid y then Just (x, y) else Nothing
-  where
-    x = coordToSquare mX
-    y = coordToSquare mY
-    coordToSquare c = 4 + floor (c / (q / 4))
-    valid s = 0 <= s && s < 8
+valid :: Float -> Maybe Int
+valid s = if 0 <= c && c < 8 then Just c else Nothing
+  where c = 4 + floor (s / (q / 4))
 
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
 move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
 
 events :: Event -> State World ()
-events (EventKey (MouseButton LeftButton) keyState _ (getCoords -> Just click)) = do
+events (EventKey (MouseButton LeftButton) keyState _ (valid -> Just x, valid -> Just y)) = do
   World board selected turn <- get
+  let click = (x, y)
   case (keyState, selected) of
-    (Down, Nothing) -> case board ! swap click of
+    (Down, Nothing) -> case board ! (y, x) of
       Piece colour _ | colour == turn -> #selected ?= click
       _ -> pure ()
     (Down, Just selection) -> do
@@ -115,12 +112,13 @@ home :: [Chessman]
 home = [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board
-start = lazyGridMap (rectOctGrid 8 8)
-  ((Piece Black <$> home)
-  <> (replicate 8 $ Piece Black Pawn)
-  <> (replicate 32 $ Empty)
-  <> (replicate 8 $ Piece White Pawn)
-  <> (Piece White <$> home))
+start = lazyGridMap (rectOctGrid 8 8) $
+  fold [ Piece Black <$> home
+       , replicate 8 $ Piece Black Pawn
+       , replicate 32 Empty
+       , replicate 8 $ Piece White Pawn
+       , Piece White <$> home
+       ]
 
 imgNames :: [String]
 imgNames = liftA2 (\p c -> [p, c]) "kqrnbp" "dl"
@@ -131,9 +129,9 @@ pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Piece Black, 
 
 main :: IO ()
 main = do
-  path <- (<> "/imgs/") <$> getCurrentDirectory
-  imgs <- for imgNames $ \name -> loadBMP $ path <> name <> ".bmp"
-  Right bmp <- readBMP $ path <> "kd.bmp"
+  path <- getCurrentDirectory
+  imgs <- for imgNames $ \name -> loadBMP $ fold [path, "/imgs/", name, ".bmp"]
+  Right bmp <- readBMP $ path <> "/imgs/kd.bmp"
 
   let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs

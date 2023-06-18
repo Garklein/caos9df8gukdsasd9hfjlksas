@@ -93,16 +93,29 @@ move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
 
 validMoves :: (Int, Int) -> Board -> [(Int, Int)]
 validMoves (x, y) b =
-  let Piece colour man = b ! (y, x) in
-  let notBlocked (mX, mY) = case b ! (mY, mX) of
-        Piece mColour _ | mColour == colour -> False
-        _ -> True in
-  let good (mX, mY) = elem mX [0..7] && elem mY [0..7] && notBlocked (mX, mY) in
+  let Piece colour man = b ! (y, x)
+      isCol c piece = case piece of
+        Piece mColour _ | mColour == c -> True
+        _ -> False
+      good c@(mX, mY) = elem mX [0..7] && elem mY [0..7] && (not . isCol colour $ b ! swap c) in
+
   filter good $ case man of
-    Horsey -> (\(mX, mY) -> (x + mX, y + mY)) <$> [(mX, mY) | mX <- [-2..2], mY <- [-2..2], abs mX + abs mY == 3]
+    Horsey -> [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
+    King   -> [(mX+x, mY+y) | mX <- [-1..1], mY <- [-1..1], mX /= 0 || mY /= 0]
+    Pawn   -> fold [ selectIf (x,   y+dir)   (Empty ==)
+                   , selectIf (x,   y+dir*2) $ (starting &&) . (Empty ==)
+                   , selectIf (x+1, y+dir)   . isCol $ other colour
+                   , selectIf (x-1, y+dir)   . isCol $ other colour
+                   ]
+      where
+        selectIf p f = if f $ b ! swap p then [p] else []
+        dir = if colour == Black then 1 else -1
+        starting = y == case colour of
+            White -> 6
+            Black -> 1
     _ -> []
 
-events :: Event -> State World ()
+events :: Event -> State World () -- todo: piece piece = select
 events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
   World board selected _ turn <- get
   let click = (x, y)

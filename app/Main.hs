@@ -18,13 +18,13 @@ import Graphics.Gloss
 import Data.Traversable
 import System.Directory
 import Control.Monad.State
-import Math.Geometry.GridMap
 import Data.Generics.Labels()
 import GHC.Generics (Generic)
 import Data.Map qualified as M
 import Math.Geometry.GridMap.Lazy
 import Math.Geometry.Grid.Octagonal
 import Graphics.Gloss.Interface.IO.Interact
+import Math.Geometry.GridMap hiding (filter)
 
 
 (.:) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
@@ -33,9 +33,9 @@ infixr 7 .:
 
 
 data Colour = White | Black deriving (Eq, Ord)
-invert :: Colour -> Colour
-invert Black = White
-invert White = Black
+other :: Colour -> Colour
+other Black = White
+other White = Black
 
 data Chessman
   = Pawn
@@ -51,6 +51,7 @@ type Board = LGridMap RectOctGrid Piece
 data World = World
   { board    :: Board
   , selected :: Maybe (Int, Int)
+  , lastMove :: Maybe (Int, Int)
   , turn     :: Colour
   }
   deriving Generic
@@ -70,9 +71,10 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
     getImg x y = case world.board ! (y, x) of
                    Empty -> Blank
                    p     -> imgs M.! p
-    img    x y cX cY = Translate (cX + q/8) (cY + q/8) (getImg x y)
-    tile   x y cX cY = colour x y . polygon $ square cX cY (q/4)
-    colour x y = Color . (if Just (x, y) == world.selected then dark else id) $ baseColour x y
+    baseImg x y = (if Just (x, y) == world.selected then Scale 1.2 1.2 else id) $ getImg x y
+    img     x y cX cY =  Translate (cX + q/8) (cY + q/8) $ baseImg x y
+    tile    x y cX cY = colour x y . polygon $ square cX cY (q/4)
+    colour  x y = Color . (if Just (x, y) == world.lastMove then dark else id) $ baseColour x y
     baseColour = bool white (light $ light blue) . odd . fromEnum .: (+)
 
 border :: Picture
@@ -81,32 +83,45 @@ border = Line $ square -q -q (q*2)
 convert :: M.Map Piece Picture -> World -> Picture
 convert imgs world = Pictures [drawBoard imgs world, border]
 
-valid :: Float -> Maybe Int
-valid s = if 0 <= c && c < 8 then Just c else Nothing
+
+toSquare :: Float -> Maybe Int
+toSquare s = if elem c [0..7] then Just c else Nothing
   where c = 4 + floor (s / (q / 4))
 
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
 move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
 
+validMoves :: (Int, Int) -> Board -> [(Int, Int)]
+validMoves (x, y) b =
+  let Piece colour man = b ! (y, x) in
+  let notBlocked (mX, mY) = case b ! (mY, mX) of
+        Piece mColour _ | mColour == colour -> False
+        _ -> True in
+  let good (mX, mY) = elem mX [0..7] && elem mY [0..7] && notBlocked (mX, mY) in
+  filter good $ case man of
+    Horsey -> (\(mX, mY) -> (x + mX, y + mY)) <$> [(mX, mY) | mX <- [-2..2], mY <- [-2..2], abs mX + abs mY == 3]
+    _ -> []
+
 events :: Event -> State World ()
-events (EventKey (MouseButton LeftButton) keyState _ (valid -> Just x, valid -> Just y)) = do
-  World board selected turn <- get
+events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
+  World board selected _ turn <- get
   let click = (x, y)
   case (keyState, selected) of
     (Down, Nothing) -> case board ! (y, x) of
       Piece colour _ | colour == turn -> #selected ?= click
       _ -> pure ()
-    (Down, Just selection) -> do
-      #selected .= Nothing
-      unless (click == selection) do
-        #board %= move selection click
-        #turn  %= invert
-    (Up, Just selection) | click /= selection -> do
-      #selected .= Nothing
-      #board    %= move selection click
-      #turn     %= invert
+    (Down, Just selection)                      -> moveIfValid board click selection
+    (Up,   Just selection) | click /= selection -> moveIfValid board click selection
     _ -> pure ()
+  where
+    moveIfValid board click selection = do
+      #selected .= Nothing
+      when (elem click $ validMoves selection board) do
+        #board    %= move selection click
+        #lastMove ?= click
+        #turn     %= other
 events _ = pure ()
+
 
 home :: [Chessman]
 home = [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
@@ -137,6 +152,6 @@ main = do
       scaledImgs = Scale factor factor <$> imgs
       w          = round $ q*2
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (w, w) (10, 10)
-      world      = World { board = start, selected = Nothing, turn = White }
+      world      = World { board = start, selected = Nothing, lastMove = Nothing, turn = White }
 
   play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) (execState . events) $ flip const

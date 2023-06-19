@@ -17,9 +17,11 @@ import Lens.Micro.Mtl
 import Graphics.Gloss
 import Data.Traversable
 import System.Directory
+import Math.Geometry.Grid
 import Control.Monad.State
 import Data.Generics.Labels()
 import GHC.Generics (Generic)
+import Prelude hiding (lookup)
 import Data.Map qualified as M
 import Math.Geometry.GridMap.Lazy
 import Math.Geometry.Grid.Octagonal
@@ -53,6 +55,7 @@ data World = World
   , selected :: Maybe (Int, Int)
   , lastMove :: Maybe (Int, Int)
   , turn     :: Colour
+  , dims     :: (Int, Int)
   }
   deriving Generic
 
@@ -72,16 +75,23 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
                    Empty -> Blank
                    p     -> imgs M.! p
     baseImg x y = (if Just (x, y) == world.selected then Scale 1.2 1.2 else id) $ getImg x y
-    img     x y cX cY =  Translate (cX + q/8) (cY + q/8) $ baseImg x y
-    tile    x y cX cY = colour x y . polygon $ square cX cY (q/4)
+    img     x y cX cY = Translate (cX + q/8) (cY + q/8) $ baseImg x y
+    tile    x y cX cY = colour x y . Polygon $ square cX cY (q/4)
     colour  x y = Color . (if Just (x, y) == world.lastMove then dark else id) $ baseColour x y
     baseColour = bool white (light $ light blue) . odd . fromEnum .: (+)
 
 border :: Picture
 border = Line $ square -q -q (q*2)
 
+background :: (Int, Int) -> Colour -> Picture
+background (w, h) colour = Color (if colour == White then white else black) . Polygon $ square x y width
+  where
+    x     = fromIntegral -w / 2
+    y     = fromIntegral -h / 2
+    width = fromIntegral $ max w h
+
 convert :: M.Map Piece Picture -> World -> Picture
-convert imgs world = Pictures [drawBoard imgs world, border]
+convert imgs world = Pictures [background world.dims world.turn, drawBoard imgs world, border]
 
 
 toSquare :: Float -> Maybe Int
@@ -91,48 +101,67 @@ toSquare s = if elem c [0..7] then Just c else Nothing
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
 move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
 
+isCol :: Colour -> Piece -> Bool
+isCol c = \case
+  Piece pC _ | pC == c -> True
+  _ -> False
+
+notCol :: Colour -> Piece -> Bool
+notCol = not .: isCol
+
+type GetMoves = (Int, Int) -> Colour -> Board -> [(Int, Int)]
+pawnMoves :: GetMoves
+pawnMoves (x, y) colour board = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
+  where
+    cases = [ ((x,   y+dir),   (Empty ==))
+            , ((x,   y+dir*2), (starting &&) . (Empty ==))
+            , ((x+1, y+dir),   isCol $ other colour)
+            , ((x-1, y+dir),   isCol $ other colour)
+            ]
+    dir = if colour == Black then 1 else -1
+    starting = y == case colour of
+      White -> 6
+      Black -> 1
+
+kingMoves :: GetMoves
+kingMoves (x, y) colour board = filter (notCol colour . (board !) . swap) $ neighbours board (x, y)
+
 validMoves :: (Int, Int) -> Board -> [(Int, Int)]
 validMoves (x, y) b =
   let Piece colour man = b ! (y, x)
-      isCol c piece = case piece of
-        Piece mColour _ | mColour == c -> True
-        _ -> False
-      good c@(mX, mY) = elem mX [0..7] && elem mY [0..7] && (not . isCol colour $ b ! swap c) in
+      good c = maybe False (not . isCol colour) $ lookup (swap c) b in
 
-  filter good $ case man of
-    Horsey -> [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
-    King   -> [(mX+x, mY+y) | mX <- [-1..1], mY <- [-1..1], mX /= 0 || mY /= 0]
-    Pawn   -> [p | (p, f) <- cases, f $ b ! swap p]
-      where
-        cases = [ ((x,   y+dir),   (Empty ==))
-                , ((x,   y+dir*2), (starting &&) . (Empty ==))
-                , ((x+1, y+dir),   isCol $ other colour)
-                , ((x-1, y+dir),   isCol $ other colour)
-                ]
-        dir = if colour == Black then 1 else -1
-        starting = y == case colour of
-            White -> 6
-            Black -> 1
-    _ -> []
+   case man of
+     Horsey -> filter good $ [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
+     King   -> kingMoves (x, y) colour b
+     Pawn   -> pawnMoves (x, y) colour b
+     _ -> []
 
 events :: Event -> State World () -- todo: piece piece = select
 events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
-  World board selected _ turn <- get
+  World board selected _ turn _ <- get
   let click = (x, y)
   case (keyState, selected) of
-    (Down, Nothing) -> case board ! (y, x) of
-      Piece colour _ | colour == turn -> #selected ?= click
-      _ -> pure ()
-    (Down, Just selection)                      -> moveIfValid board click selection
-    (Up,   Just selection) | click /= selection -> moveIfValid board click selection
+    (Down, Nothing) -> selectIfValid board turn click
+    (Down, Just selection) -> do
+      moved <- moveIfValid board click selection
+      when (not moved && click /= selection) do
+        selectIfValid board turn click
+    (Up, Just selection) | click /= selection -> void $ moveIfValid board click selection
     _ -> pure ()
   where
+    selectIfValid board turn click = case board ! swap click of
+      Piece colour _ | colour == turn -> #selected ?= click
+      _ -> pure ()
     moveIfValid board click selection = do
       #selected .= Nothing
-      when (elem click $ validMoves selection board) do
+      let good = elem click $ validMoves selection board
+      when (good) do
         #board    %= move selection click
         #lastMove ?= click
         #turn     %= other
+      pure good
+events (EventResize dims) = #dims .= dims
 events _ = pure ()
 
 
@@ -164,7 +193,8 @@ main = do
   let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs
       w          = round $ q*2
-      window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" (w, w) (10, 10)
-      world      = World { board = start, selected = Nothing, lastMove = Nothing, turn = White }
+      dims       = (w, w)
+      window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" dims (10, 10)
+      world      = World { board = start, selected = Nothing, lastMove = Nothing, turn = White, dims = dims }
 
   play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) (execState . events) $ flip const

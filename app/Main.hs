@@ -106,10 +106,11 @@ isCol c = \case
   Piece pC _ | pC == c -> True
   _ -> False
 
-notCol :: Colour -> Piece -> Bool
-notCol = not .: isCol
+notCol :: Board -> Colour -> (Int, Int) -> Bool
+notCol board colour (x, y) = not . isCol colour $ board ! (y, x)
 
 type GetMoves = (Int, Int) -> Colour -> Board -> [(Int, Int)]
+
 pawnMoves :: GetMoves
 pawnMoves (x, y) colour board = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
   where
@@ -124,18 +125,44 @@ pawnMoves (x, y) colour board = [p | (p, f) <- cases, maybe False f $ lookup (sw
       Black -> 1
 
 kingMoves :: GetMoves
-kingMoves (x, y) colour board = filter (notCol colour . (board !) . swap) $ neighbours board (x, y)
+kingMoves (x, y) colour board = filter (notCol board colour) $ neighbours board (x, y)
+
+horseyMoves :: GetMoves
+horseyMoves (x, y) colour board = filter (\c -> contains board c && notCol board colour c) $
+  [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
+
+lineMoves :: (Int, Int) -> Colour -> Board -> (Int, Int) -> [(Int, Int)]
+lineMoves (x, y) colour board (cX, cY) =
+  take (min noSame tillTake) toEdge
+  where
+    noSame   = length $ takeWhile (notCol board colour) toEdge
+    tillTake = 1 + (length $ takeWhile (notCol board (other colour)) toEdge)
+    toEdge   = takeWhile (contains board) . tail $ zip [x, x+cX..] [y, y+cY..]
+
+linesMoves :: [(Int, Int)] -> (Int, Int) -> Colour -> Board -> [(Int, Int)]
+linesMoves dirs coords colour board = fold $ lineMoves coords colour board <$> dirs
+
+rookMoves :: GetMoves
+rookMoves = linesMoves [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+bishopMoves :: GetMoves
+bishopMoves = linesMoves [(1, 1), (-1, 1), (-1, -1), (1, -1)]
+
+queenMoves :: GetMoves
+queenMoves = linesMoves . filter (/= (0, 0)) $ liftA2 (,) [-1..1] [-1..1]
 
 validMoves :: (Int, Int) -> Board -> [(Int, Int)]
 validMoves (x, y) b =
-  let Piece colour man = b ! (y, x)
-      good c = maybe False (not . isCol colour) $ lookup (swap c) b in
-
-   case man of
-     Horsey -> filter good $ [(mX+x, mY+y) | mX <- [-2..2], mY <- [-2..2], (abs $ mX*mY) == 2]
-     King   -> kingMoves (x, y) colour b
-     Pawn   -> pawnMoves (x, y) colour b
-     _ -> []
+  moves (x, y) colour b
+  where
+    Piece colour man = b ! (y, x)
+    moves = case man of
+      Horsey -> horseyMoves
+      King   -> kingMoves
+      Pawn   -> pawnMoves
+      Rook   -> rookMoves
+      Bishop -> bishopMoves
+      Queen  -> queenMoves
 
 events :: Event -> State World () -- todo: piece piece = select
 events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do

@@ -9,6 +9,7 @@ module Main where
 import Data.Bool
 import Codec.BMP
 import Data.Tuple
+import Data.Maybe
 import Data.Functor
 import Data.Foldable
 import Control.Monad
@@ -25,6 +26,7 @@ import Prelude hiding (lookup)
 import Data.Map qualified as M
 import Math.Geometry.GridMap.Lazy
 import Math.Geometry.Grid.Octagonal
+import Data.List hiding (insert, lookup)
 import Graphics.Gloss.Interface.IO.Interact
 import Math.Geometry.GridMap hiding (filter)
 
@@ -151,12 +153,27 @@ bishopMoves = linesMoves [(1, 1), (-1, 1), (-1, -1), (1, -1)]
 queenMoves :: GetMoves
 queenMoves = linesMoves . filter (/= (0, 0)) $ liftA2 (,) [-1..1] [-1..1]
 
-validMoves :: (Int, Int) -> Board -> [(Int, Int)]
-validMoves (x, y) b =
-  moves (x, y) colour b
+side :: Colour -> Board -> [(Int, Int)]
+side colour board = [coords | coords <- indices board, isCol colour $ board ! swap coords]
+
+threatening :: Colour -> Board -> [(Int, Int)]
+threatening colour board = nub . fold $ rawMoves board <$> side colour board
+
+check :: Colour -> Board -> Bool
+check colour board = elem kingIdx $ threatening (other colour) board
   where
-    Piece _ colour man = b ! (y, x)
-    moves = case man of
+    kingIdx = fromJust . find isKing $ indices board
+    isKing coords = case (board ! swap coords) of
+      Piece { colour = c, man = King } | c == colour -> True
+      _ -> False
+
+-- moves without checking if they would reveal check
+rawMoves :: Board -> (Int, Int) -> [(Int, Int)]
+rawMoves board (x, y) =
+  pieceMoves (x, y) colour board
+  where
+    Piece _ colour man = board ! (y, x)
+    pieceMoves = case man of
       Horsey -> horseyMoves
       King   -> kingMoves
       Pawn   -> pawnMoves
@@ -164,7 +181,13 @@ validMoves (x, y) b =
       Bishop -> bishopMoves
       Queen  -> queenMoves
 
-events :: Event -> State World () -- todo: piece piece = select
+moves :: Board -> (Int, Int) -> [(Int, Int)]
+moves board (x, y) = filter noCheck $ rawMoves board (x, y)
+  where
+    noCheck (eX, eY) = not . check c $ move (x, y) (eX, eY) board
+    c = colour $ board ! (y, x)
+
+events :: Event -> State World ()
 events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
   World board selected _ turn _ <- get
   let click = (x, y)
@@ -182,7 +205,7 @@ events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSqua
       _ -> pure ()
     moveIfValid board click selection = do
       #selected .= Nothing
-      let good = elem click $ validMoves selection board
+      let good = elem click $ moves board selection
       when (good) do
         #board    %= move selection click
         #lastMove ?= click

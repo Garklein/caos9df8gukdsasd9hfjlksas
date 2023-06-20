@@ -47,7 +47,7 @@ data Chessman
   | Queen
   | King
   deriving (Eq, Ord)
-data Piece = Piece Colour Chessman | Empty
+data Piece = Piece { nMoves :: Int, colour :: Colour, man :: Chessman } | Empty
   deriving (Eq, Ord)
 type Board = LGridMap RectOctGrid Piece
 data World = World
@@ -73,7 +73,7 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
 
     getImg x y = case world.board ! (y, x) of
                    Empty -> Blank
-                   p     -> imgs M.! p
+                   p     -> imgs M.! (p { nMoves = 0 })
     baseImg x y = (if Just (x, y) == world.selected then Scale 1.2 1.2 else id) $ getImg x y
     img     x y cX cY = Translate (cX + q/8) (cY + q/8) $ baseImg x y
     tile    x y cX cY = colour x y . Polygon $ square cX cY (q/4)
@@ -99,11 +99,13 @@ toSquare s = if elem c [0..7] then Just c else Nothing
   where c = 4 + floor (s / (q / 4))
 
 move :: (Int, Int) -> (Int, Int) -> Board -> Board
-move s e board = insert (swap e) (board ! swap s) $ insert (swap s) Empty board
+move s e board = insert (swap e) (piece { nMoves = piece.nMoves + 1 }) $ insert (swap s) Empty board
+  where
+    piece = board ! swap s
 
 isCol :: Colour -> Piece -> Bool
 isCol c = \case
-  Piece pC _ | pC == c -> True
+  Piece _ pC _ | pC == c -> True
   _ -> False
 
 notCol :: Board -> Colour -> (Int, Int) -> Bool
@@ -115,14 +117,12 @@ pawnMoves :: GetMoves
 pawnMoves (x, y) colour board = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
   where
     cases = [ ((x,   y+dir),   (Empty ==))
-            , ((x,   y+dir*2), (starting &&) . (Empty ==))
+            , ((x,   y+dir*2), (nMoves == 0 &&) . (Empty ==))
             , ((x+1, y+dir),   isCol $ other colour)
             , ((x-1, y+dir),   isCol $ other colour)
             ]
     dir = if colour == Black then 1 else -1
-    starting = y == case colour of
-      White -> 6
-      Black -> 1
+    Piece nMoves _ _ = board ! (y, x)
 
 kingMoves :: GetMoves
 kingMoves (x, y) colour board = filter (notCol board colour) $ neighbours board (x, y)
@@ -155,7 +155,7 @@ validMoves :: (Int, Int) -> Board -> [(Int, Int)]
 validMoves (x, y) b =
   moves (x, y) colour b
   where
-    Piece colour man = b ! (y, x)
+    Piece _ colour man = b ! (y, x)
     moves = case man of
       Horsey -> horseyMoves
       King   -> kingMoves
@@ -178,7 +178,7 @@ events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSqua
     _ -> pure ()
   where
     selectIfValid board turn click = case board ! swap click of
-      Piece colour _ | colour == turn -> #selected ?= click
+      Piece _ colour _ | colour == turn -> #selected ?= click
       _ -> pure ()
     moveIfValid board click selection = do
       #selected .= Nothing
@@ -197,18 +197,18 @@ home = [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $
-  fold [ Piece Black <$> home
-       , replicate 8 $ Piece Black Pawn
+  fold [ Piece 0 Black <$> home
+       , replicate 8 $ Piece 0 Black Pawn
        , replicate 32 Empty
-       , replicate 8 $ Piece White Pawn
-       , Piece White <$> home
+       , replicate 8 $ Piece 0 White Pawn
+       , Piece 0 White <$> home
        ]
 
 imgNames :: [String]
 imgNames = liftA2 (\p c -> [p, c]) "kqrnbp" "dl"
 
 pieceOrder :: [Piece]
-pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Piece Black, Piece White]
+pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Piece 0 Black, Piece 0 White]
 
 
 main :: IO ()

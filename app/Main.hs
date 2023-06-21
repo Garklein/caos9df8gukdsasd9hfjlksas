@@ -26,9 +26,9 @@ import Data.Map qualified as M
 import Math.Geometry.GridMap.Lazy
 import Math.Geometry.Grid.Octagonal
 import Math.Geometry.Grid hiding (null)
-import Data.List hiding (insert, lookup)
 import Graphics.Gloss.Interface.IO.Interact
 import Math.Geometry.GridMap hiding (filter)
+import Data.Set hiding (fold, insert, filter, null, take)
 
 
 (.:) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
@@ -100,13 +100,21 @@ background (w, h) c = Color c . Polygon $ square x y width
 
 -- todo: make this change with window sizes
 convert :: M.Map Piece Picture -> World -> Picture
-convert imgs world = Pictures $ case world.gameState of
-  Ongoing  -> [background world.dims $ if world.turn == White then white else black, drawBoard imgs world, border]
-  WhiteWin -> [background world.dims white,       say black "White wins!"]
-  BlackWin -> [background world.dims black,       say white "Black wins!"]
-  Draw     -> [background world.dims $ greyN 0.8, say black "It's a draw!"]
+convert imgs world = Pictures $
+  ([background world.dims bColour, drawBoard imgs world, border] <>
+   [ case world.gameState of
+       Ongoing  -> Blank
+       WhiteWin -> say black "White wins!"
+       BlackWin -> say white "Black wins!"
+       Draw     -> say black "It's a draw!"
+   ])
   where
-    say c s = Color c . Translate -400 0 $ Text s
+    say c s = Color c . Translate -400 350 $ Text s
+    bColour = case world.gameState of
+      Ongoing -> if world.turn == White then white else black
+      WhiteWin -> white
+      BlackWin -> black
+      Draw -> greyN 0.8
 
 
 toSquare :: Float -> Maybe Int
@@ -169,11 +177,11 @@ queenMoves = linesMoves . filter (/= (0, 0)) $ liftA2 (,) [-1..1] [-1..1]
 side :: Colour -> Board -> [(Int, Int)]
 side colour board = [coords | coords <- indices board, isCol colour $ board ! swap coords]
 
-threatening :: Colour -> Board -> [(Int, Int)]
-threatening colour board = nub . fold $ rawMoves board <$> side colour board
+threatening :: Colour -> Board -> Set (Int, Int)
+threatening colour board = unions $ fromList . rawMoves board <$> side colour board
 
 check :: Colour -> Board -> Bool
-check colour board = elem kingIdx $ threatening (other colour) board
+check colour board = member kingIdx $ threatening (other colour) board
   where
     kingIdx = fromJust . find isKing $ indices board
     isKing coords = case (board ! swap coords) of

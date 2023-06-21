@@ -18,7 +18,6 @@ import Lens.Micro.Mtl
 import Graphics.Gloss
 import Data.Traversable
 import System.Directory
-import Math.Geometry.Grid
 import Control.Monad.State
 import Data.Generics.Labels()
 import GHC.Generics (Generic)
@@ -26,6 +25,7 @@ import Prelude hiding (lookup)
 import Data.Map qualified as M
 import Math.Geometry.GridMap.Lazy
 import Math.Geometry.Grid.Octagonal
+import Math.Geometry.Grid hiding (null)
 import Data.List hiding (insert, lookup)
 import Graphics.Gloss.Interface.IO.Interact
 import Math.Geometry.GridMap hiding (filter)
@@ -41,6 +41,12 @@ other :: Colour -> Colour
 other Black = White
 other White = Black
 
+type Board = LGridMap RectOctGrid Piece
+data GameState = Ongoing | WhiteWin | BlackWin | Draw deriving Eq
+colourToWin :: Colour -> GameState
+colourToWin Black = BlackWin
+colourToWin White = WhiteWin
+
 data Chessman
   = Pawn
   | Rook
@@ -51,13 +57,13 @@ data Chessman
   deriving (Eq, Ord)
 data Piece = Piece { nMoves :: Int, colour :: Colour, man :: Chessman } | Empty
   deriving (Eq, Ord)
-type Board = LGridMap RectOctGrid Piece
 data World = World
-  { board    :: Board
-  , selected :: Maybe (Int, Int)
-  , lastMove :: Maybe (Int, Int)
-  , turn     :: Colour
-  , dims     :: (Int, Int)
+  { board     :: Board
+  , selected  :: Maybe (Int, Int)
+  , lastMove  :: Maybe (Int, Int)
+  , turn      :: Colour
+  , dims      :: (Int, Int)
+  , gameState :: GameState
   }
   deriving Generic
 
@@ -85,15 +91,22 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
 border :: Picture
 border = Line $ square -q -q (q*2)
 
-background :: (Int, Int) -> Colour -> Picture
-background (w, h) colour = Color (if colour == White then white else black) . Polygon $ square x y width
+background :: (Int, Int) -> Color -> Picture
+background (w, h) c = Color c . Polygon $ square x y width
   where
     x     = fromIntegral -w / 2
     y     = fromIntegral -h / 2
     width = fromIntegral $ max w h
 
+-- todo: make this change with window sizes
 convert :: M.Map Piece Picture -> World -> Picture
-convert imgs world = Pictures [background world.dims world.turn, drawBoard imgs world, border]
+convert imgs world = Pictures $ case world.gameState of
+  Ongoing  -> [background world.dims $ if world.turn == White then white else black, drawBoard imgs world, border]
+  WhiteWin -> [background world.dims white,       say black "White wins!"]
+  BlackWin -> [background world.dims black,       say white "Black wins!"]
+  Draw     -> [background world.dims $ greyN 0.8, say black "It's a draw!"]
+  where
+    say c s = Color c . Translate -400 0 $ Text s
 
 
 toSquare :: Float -> Maybe Int
@@ -187,16 +200,35 @@ moves board (x, y) = filter noCheck $ rawMoves board (x, y)
     noCheck (eX, eY) = not . check c $ move (x, y) (eX, eY) board
     c = colour $ board ! (y, x)
 
+eventIfOngoing :: Event -> World -> World
+eventIfOngoing event world =
+  if world.gameState /= Ongoing && isKeyPress
+     then world
+     else execState (events event) world
+  where
+    isKeyPress = case event of
+      (EventKey _ _ _ _) -> True
+      _                  -> False
+
+checkWin :: World -> World
+checkWin world =
+  if noMoves
+    then world { gameState = if check colour b then colourToWin $ other colour else Draw }
+    else world
+  where
+    colour = world.turn
+    b = world.board
+    noMoves = null . fold $ moves b <$> side colour b
+
 events :: Event -> State World ()
 events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
-  World board selected _ turn _ <- get
+  World board selected _ turn _ _ <- get
   let click = (x, y)
   case (keyState, selected) of
     (Down, Nothing) -> selectIfValid board turn click
     (Down, Just selection) -> do
       moved <- moveIfValid board click selection
-      when (not moved && click /= selection) do
-        selectIfValid board turn click
+      when (not moved && click /= selection) $ selectIfValid board turn click
     (Up, Just selection) | click /= selection -> void $ moveIfValid board click selection
     _ -> pure ()
   where
@@ -210,6 +242,7 @@ events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSqua
         #board    %= move selection click
         #lastMove ?= click
         #turn     %= other
+        modify checkWin
       pure good
 events (EventResize dims) = #dims .= dims
 events _ = pure ()
@@ -245,6 +278,12 @@ main = do
       w          = round $ q*2
       dims       = (w, w)
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" dims (10, 10)
-      world      = World { board = start, selected = Nothing, lastMove = Nothing, turn = White, dims = dims }
+      world = World { board     = start
+                    , selected  = Nothing
+                    , lastMove  = Nothing
+                    , turn      = White
+                    , dims      = dims
+                    , gameState = Ongoing
+                    }
 
-  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) (execState . events) $ flip const
+  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) eventIfOngoing $ flip const

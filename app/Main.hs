@@ -86,7 +86,7 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
     img     x y cX cY = Translate (cX + q/8) (cY + q/8) $ baseImg x y
     tile    x y cX cY = colour x y . Polygon $ square cX cY (q/4)
     colour  x y = Color . (if Just (x, y) == world.lastMove then dark else id) $ baseColour x y
-    baseColour = bool white (light $ light blue) . odd . fromEnum .: (+)
+    baseColour = bool (light $ light blue) white . odd . fromEnum .: (+)
 
 border :: Picture
 border = Line $ square -q -q (q*2)
@@ -249,7 +249,7 @@ events _ = pure ()
 
 
 home :: [Chessman]
-home = [Rook, Horsey, Bishop, Queen, King, Bishop, Horsey, Rook]
+home = [Rook, Horsey, Bishop, King, Queen, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $

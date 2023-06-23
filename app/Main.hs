@@ -35,6 +35,9 @@ import Data.Set hiding (fold, insert, filter, null, take, drop)
 (.:) = (.) . (.)
 infixr 7 .:
 
+twoArray :: a -> a -> [a]
+twoArray x y = [x, y]
+
 
 data Colour = White | Black deriving (Eq, Ord)
 other :: Colour -> Colour
@@ -42,7 +45,7 @@ other Black = White
 other White = Black
 
 type Board = LGridMap RectOctGrid Piece
-data GameState = Ongoing | WhiteWin | BlackWin | Draw deriving Eq
+data GameState = Ongoing | Promoting (Int, Int) | WhiteWin | BlackWin | Draw deriving Eq
 colourToWin :: Colour -> GameState
 colourToWin Black = BlackWin
 colourToWin White = WhiteWin
@@ -98,23 +101,43 @@ background (w, h) c = Color c . Polygon $ square x y width
     y     = fromIntegral -h / 2
     width = fromIntegral $ max w h
 
+promotingBL :: (Int, Int) -> (Float, Float)
+promotingBL (x, y) = (blX, blY)
+  where
+    blX = fromIntegral x * q/4 - q + q/8 - q/2
+    blY = fromIntegral (y + (signum $ y - 2)) * q/4 - q
+
+promotingPieces :: [Chessman]
+promotingPieces = [Queen, Horsey, Bishop, Rook]
+
+drawPromoting :: M.Map Piece Picture -> Colour -> (Int, Int) -> Picture
+drawPromoting imgs colour (x, y) = Pictures $ zipWith (\icon (sX, sY) -> Translate sX sY icon) icons squareCoords
+  where
+    icons        = (\p -> Pictures $ outline <> [Translate (q/8) (q/8) . (imgs M.!) $ Piece 0 colour p]) <$> promotingPieces
+    outline      = liftA2 twoArray (Color (greyN 0.8) . Polygon) Line $ square 0 0 (q/4)
+    squareCoords = take 4 . zip [blX, blX + q/4 ..] $ repeat blY
+    (blX, blY)   = promotingBL (x, y)
+
 -- todo: make this change with window sizes
 convert :: M.Map Piece Picture -> World -> Picture
 convert imgs world = Pictures $
   ([background world.dims bColour, drawBoard imgs world, border] <>
    [ case world.gameState of
-       Ongoing  -> Blank
-       WhiteWin -> say black "White wins!"
-       BlackWin -> say white "Black wins!"
-       Draw     -> say black "It's a draw!"
+       Ongoing     -> Blank
+       Promoting c -> drawPromoting imgs world.turn c
+       WhiteWin    -> say black "White wins!"
+       BlackWin    -> say white "Black wins!"
+       Draw        -> say black "It's a draw!"
    ])
   where
     say c s = Color c . Translate -400 350 $ Text s
+    turnColour = if world.turn == White then white else black
     bColour = case world.gameState of
-      Ongoing -> if world.turn == White then white else black
-      WhiteWin -> white
-      BlackWin -> black
-      Draw -> greyN 0.8
+      Ongoing     -> turnColour
+      Promoting _ -> turnColour
+      WhiteWin    -> white
+      BlackWin    -> black
+      Draw        -> greyN 0.8
 
 
 -- rook -> king, rook
@@ -181,7 +204,7 @@ canCastle (rX, rY) colour board =
     noPieces = all ((== Empty) . (board !) . swap) . init $ tail lineCoords
     lineCoords = zip [rX, rX + signum (kX - rX) .. kX] $ repeat rY
     cornerRook = case rook of
-      Piece { nMoves = 0 } -> True
+      Piece { man = Rook, nMoves = 0 } -> True
       _                    -> False
     rook = board ! (rY, kX)
     king = board ! (kY, kX)
@@ -258,16 +281,6 @@ moves board (x, y) = filter noCheck $ rawMoves board (x, y)
     noCheck (eX, eY) = not . check c . fst $ move (x, y) (eX, eY) board
     c = colour $ board ! (y, x)
 
-eventIfOngoing :: Event -> World -> World
-eventIfOngoing event world =
-  if world.gameState /= Ongoing && isKeyPress
-     then world
-     else execState (events event) world
-  where
-    isKeyPress = case event of
-      (EventKey _ _ _ _) -> True
-      _                  -> False
-
 checkWin :: World -> World
 checkWin world =
   if noMoves
@@ -278,12 +291,32 @@ checkWin world =
     b = world.board
     noMoves = null . fold $ moves b <$> side colour b
 
+toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
+toPromotingSquare (pX, pY) (x, y) =
+  if y < blY || blY + q/4 < y || notElem xSquare [0..3]
+    then Nothing
+    else Just xSquare
+  where
+    xSquare = floor $ (x - blX) / (q/4)
+    (blX, blY) = promotingBL (pX, pY)
+
+eventWhilePromoting :: World -> Event -> World
+eventWhilePromoting world = \case
+  (EventKey (MouseButton LeftButton) Down _ (toPromotingSquare (x, y) -> Just choice))
+    -> world { board     = insert (y, x) (Piece 0 turn (promotingPieces !! choice)) board
+             , turn      = other turn
+             , gameState = Ongoing
+             }
+  _ -> world
+  where
+    World { board = board, turn = turn, gameState = Promoting (x, y) } = world
+
 toSquare :: Float -> Maybe Int
 toSquare s = if elem c [0..7] then Just c else Nothing
   where c = 4 + floor (s / (q / 4))
 
-events :: Event -> State World ()
-events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
+normalEvent :: Event -> State World ()
+normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
   World board selected _ turn _ _ <- get
   let click = (x, y)
   case (keyState, selected) of
@@ -300,15 +333,37 @@ events (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSqua
     moveIfValid board click selection = do
       #selected .= Nothing
       let good = elem click $ moves board selection
-      when (good) do
+      when good do
         let (newBoard, highlight) = move selection click board
         #board    .= newBoard
         #lastMove ?= highlight
-        #turn     %= other
+        if elem y [0, 7] && isPawn newBoard click
+          then #gameState .= Promoting click
+          else #turn      %= other
         modify checkWin
       pure good
-events (EventResize dims) = #dims .= dims
-events _ = pure ()
+    isPawn board coords = case board ! swap coords of
+      Piece { man = Pawn } -> True
+      _                    -> False
+normalEvent (EventKey (Char 'z') _ _ _) = do
+  turn <- use #turn
+  board <- use #board
+  let notQK p = p.man /= King && p.man /= Queen
+  let pieces = filter (notQK . (board !) . swap) $ side turn board
+  when (not $ null pieces) $ #board %= insert (swap $ head pieces) (Piece 0 turn Queen)
+normalEvent (EventResize dims) = #dims .= dims
+normalEvent _ = pure ()
+
+events :: Event -> World -> World
+events event world =
+  case world.gameState of
+    Promoting _                    -> eventWhilePromoting world event
+    x | x /= Ongoing && not resize -> world
+    _                              -> execState (normalEvent event) world
+  where
+    resize = case event of
+      (EventResize _) -> True
+      _                     -> False
 
 
 home :: [Chessman]
@@ -316,15 +371,16 @@ home = [Rook, Horsey, Bishop, King, Queen, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $
-  fold [ Piece 0 Black <$> home
-       , replicate 8 $ Piece 0 Black Pawn
-       , replicate 32 Empty
-       , replicate 8 $ Piece 0 White Pawn
-       , Piece 0 White <$> home
-       ]
+  fold [replicate 8 Empty, [Piece 0 White Pawn], replicate 52 Empty, [Piece 0 Black King, Empty, Piece 0 White King]]
+  --fold [ Piece 0 Black <$> home
+  --     , replicate 8 $ Piece 0 Black Pawn
+  --     , replicate 32 Empty
+  --     , replicate 8 $ Piece 0 White Pawn
+  --     , Piece 0 White <$> home
+  --     ]
 
 imgNames :: [String]
-imgNames = liftA2 (\p c -> [p, c]) "kqrnbp" "dl"
+imgNames = liftA2 twoArray "kqrnbp" "dl"
 
 pieceOrder :: [Piece]
 pieceOrder = liftA2 (&) [King, Queen, Rook, Horsey, Bishop, Pawn] [Piece 0 Black, Piece 0 White]
@@ -349,4 +405,4 @@ main = do
                     , gameState = Ongoing
                     }
 
-  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) eventIfOngoing $ flip const
+  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const

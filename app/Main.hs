@@ -204,9 +204,9 @@ canCastle (rX, rY) colour board =
     noPieces = all ((== Empty) . (board !) . swap) . init $ tail lineCoords
     lineCoords = zip [rX, rX + signum (kX - rX) .. kX] $ repeat rY
     cornerRook = case rook of
-      Piece { man = Rook, nMoves = 0 } -> True
-      _                    -> False
-    rook = board ! (rY, kX)
+      Piece { nMoves = 0, man = Rook } -> True
+      _                                -> False
+    rook = board ! (rY, rX)
     king = board ! (kY, kX)
     (kX, kY) = kingIdx colour board
 
@@ -371,13 +371,12 @@ home = [Rook, Horsey, Bishop, King, Queen, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $
-  fold [replicate 8 Empty, [Piece 0 White Pawn], replicate 52 Empty, [Piece 0 Black King, Empty, Piece 0 White King]]
-  --fold [ Piece 0 Black <$> home
-  --     , replicate 8 $ Piece 0 Black Pawn
-  --     , replicate 32 Empty
-  --     , replicate 8 $ Piece 0 White Pawn
-  --     , Piece 0 White <$> home
-  --     ]
+  fold [ Piece 0 Black <$> home
+       , replicate 8 $ Piece 0 Black Pawn
+       , replicate 32 Empty
+       , replicate 8 $ Piece 0 White Pawn
+       , Piece 0 White <$> home
+       ]
 
 imgNames :: [String]
 imgNames = liftA2 twoArray "kqrnbp" "dl"

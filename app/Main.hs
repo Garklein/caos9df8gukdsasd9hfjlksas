@@ -154,25 +154,29 @@ rawMove s e board = insert (swap e) (piece { nMoves = piece.nMoves + 1 }) $ inse
   where
     piece = board ! swap s
 
--- returns board, then the square to highlight
-move :: (Int, Int) -> (Int, Int) -> Board -> (Board, (Int, Int))
-move s@(sX, _) e@(eX, eY) board =
-  case piece of
-    Piece { man = King } ->
+-- returns square to highlight and board
+move :: (Int, Int) -> (Int, Int) -> Board -> ((Int, Int), Board)
+move s@(sX, sY) e@(eX, eY) board =
+  case man of
+    King ->
       if (abs $ sX - eX) > 1
          then castle s (if eX < sX then 0 else 7, eY)
          else normalMove
-    Piece { man = Rook } ->
-      if e == kingIdx piece.colour board
+    Rook ->
+      if e == kingIdx colour board
          then castle e s
+         else normalMove
+    Pawn ->
+      if (abs $ sX - eX) == 1 && board ! (eY, eX) == Empty
+         then insert (sY, eX) Empty <$> normalMove -- en passant
          else normalMove
     _ -> normalMove
   where
     castle king rook =
       let (castledK, castledR) = castleCoords rook in
-      (rawMove rook castledR $ rawMove king castledK board, castledK)
-    normalMove = (rawMove s e board, e)
-    piece = board ! swap s
+      (castledK, rawMove rook castledR $ rawMove king castledK board)
+    normalMove = (e, rawMove s e board)
+    Piece { man = man, colour = colour} = board ! swap s
 
 isCol :: Colour -> Piece -> Bool
 isCol c = \case
@@ -184,14 +188,22 @@ notCol board colour (x, y) = not . isCol colour $ board ! (y, x)
 
 type GetMoves = (Int, Int) -> Colour -> Board -> [(Int, Int)]
 
-pawnMoves :: GetMoves
-pawnMoves (x, y) colour board = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
+pawnMoves :: (Int, Int) -> (Int, Int) -> Colour -> Board -> [(Int, Int)]
+pawnMoves lastMove (x, y) colour board = enPassant diagL <> enPassant diagR <> normalMoves
   where
+    enPassant diag = if otherPawn == lastMove && moved2Pawn otherPawn then [diag] else []
+      where otherPawn = (- dir) <$> diag
+    moved2Pawn coords = case lookup (swap coords) board of
+      Just Piece { man = Pawn, nMoves = 1, colour = c } | c == other colour -> True
+      _                                                                -> False
+    normalMoves = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
     cases = [ ((x,   y+dir),   (Empty ==))
             , ((x,   y+dir*2), (nMoves == 0 &&) . (Empty ==))
-            , ((x+1, y+dir),   isCol $ other colour)
-            , ((x-1, y+dir),   isCol $ other colour)
+            , (diagL,          isCol $ other colour)
+            , (diagL,          isCol $ other colour)
             ]
+    diagL = (x-1, y+dir)
+    diagR = (x+1, y+dir)
     dir = if colour == Black then 1 else -1
     Piece nMoves _ _ = board ! (y, x)
 
@@ -249,7 +261,7 @@ side :: Colour -> Board -> [(Int, Int)]
 side colour board = [coords | coords <- indices board, isCol colour $ board ! swap coords]
 
 threatening :: Board -> Colour -> Set (Int, Int)
-threatening board colour = unions $ fromList . rawMoves board True <$> side colour board
+threatening board colour = unions $ fromList . rawMoves (8, 8) board True <$> side colour board
 
 kingIdx :: Colour -> Board -> (Int, Int)
 kingIdx colour board = fromJust . find isKing $ indices board
@@ -264,23 +276,23 @@ check colour board = member (kingIdx colour board) . threatening board $ other c
 
 
 -- moves without checking if they would reveal check
-rawMoves :: Board -> Bool -> (Int, Int) -> [(Int, Int)]
-rawMoves board noCastle (x, y) =
+rawMoves :: (Int, Int) -> Board -> Bool -> (Int, Int) -> [(Int, Int)]
+rawMoves lastMove board noCastle (x, y) =
   pieceMoves (x, y) colour board
   where
     Piece _ colour man = board ! (y, x)
     pieceMoves = case man of
       Horsey -> horseyMoves
       King   -> kingMoves noCastle
-      Pawn   -> pawnMoves
+      Pawn   -> pawnMoves lastMove
       Rook   -> rookMoves noCastle
       Bishop -> bishopMoves
       Queen  -> queenMoves
 
-moves :: Board -> (Int, Int) -> [(Int, Int)]
-moves board (x, y) = filter noCheck $ rawMoves board False (x, y)
+moves :: (Int, Int) -> Board -> (Int, Int) -> [(Int, Int)]
+moves lastMove board (x, y) = filter noCheck $ rawMoves lastMove board False (x, y)
   where
-    noCheck (eX, eY) = not . check c . fst $ move (x, y) (eX, eY) board
+    noCheck (eX, eY) = not . check c . snd $ move (x, y) (eX, eY) board
     c = colour $ board ! (y, x)
 
 checkWin :: World -> World
@@ -290,7 +302,7 @@ checkWin world =
     else world
   where
     b = world.board
-    noMoves = null . fold $ moves b <$> side world.turn b
+    noMoves = null . fold $ moves (fromJust world.lastMove) b <$> side world.turn b
 
 toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
 toPromotingSquare (pX, pY) (x, y) =
@@ -333,9 +345,10 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
       _ -> pure ()
     moveIfValid board click selection = do
       #selected .= Nothing
-      let good = elem click $ moves board selection
+      lastMove <- use #lastMove
+      let good = elem click $ moves (fromMaybe (8, 8) lastMove) board selection
       when good do
-        let (newBoard, highlight) = move selection click board
+        let (highlight, newBoard) = move selection click board
         #board    .= newBoard
         #lastMove ?= highlight
         if elem y [0, 7] && isPawn newBoard click

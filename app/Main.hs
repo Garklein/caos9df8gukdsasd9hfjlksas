@@ -210,12 +210,14 @@ canCastle (rX, rY) colour board =
     king = board ! (kY, kX)
     (kX, kY) = kingIdx colour board
 
-kingMoves :: GetMoves
-kingMoves (x, y) colour board = castleKingside <> castleQueenside <> (filter (notCol board colour) $ neighbours board (x, y))
+
+kingMoves :: Bool -> (Int, Int) -> Colour -> Board -> [(Int, Int)]
+kingMoves noCastle (x, y) colour board = castleKingside <> castleQueenside <> normalMoves
   where
+    normalMoves     = filter (notCol board colour) $ neighbours board (x, y)
     castleKingside  = castleMoves (0, y)  [(0, y), (2, y)]
     castleQueenside = castleMoves (7, y) [(7, y), (5, y)]
-    castleMoves rook clicks = if canCastle rook colour board then clicks else []
+    castleMoves rook clicks = if not noCastle && canCastle rook colour board then clicks else []
 
 horseyMoves :: GetMoves
 horseyMoves (x, y) colour board = filter (\c -> contains board c && notCol board colour c) $
@@ -232,10 +234,10 @@ lineMoves (x, y) colour board (cX, cY) =
 linesMoves :: [(Int, Int)] -> (Int, Int) -> Colour -> Board -> [(Int, Int)]
 linesMoves dirs coords colour board = fold $ lineMoves coords colour board <$> dirs
 
-rookMoves :: GetMoves
-rookMoves coords colour board = castle <> linesMoves [(1, 0), (-1, 0), (0, 1), (0, -1)] coords colour board
+rookMoves :: Bool -> (Int, Int) -> Colour -> Board -> [(Int, Int)]
+rookMoves noCastle coords colour board = castle <> linesMoves [(1, 0), (-1, 0), (0, 1), (0, -1)] coords colour board
   where
-    castle = if canCastle coords colour board then [kingIdx colour board] else []
+    castle = if not noCastle && canCastle coords colour board then [kingIdx colour board] else []
 
 bishopMoves :: GetMoves
 bishopMoves = linesMoves [(1, 1), (-1, 1), (-1, -1), (1, -1)]
@@ -247,7 +249,7 @@ side :: Colour -> Board -> [(Int, Int)]
 side colour board = [coords | coords <- indices board, isCol colour $ board ! swap coords]
 
 threatening :: Board -> Colour -> Set (Int, Int)
-threatening board colour = unions $ fromList . rawMoves board <$> side colour board
+threatening board colour = unions $ fromList . rawMoves board True <$> side colour board
 
 kingIdx :: Colour -> Board -> (Int, Int)
 kingIdx colour board = fromJust . find isKing $ indices board
@@ -262,21 +264,21 @@ check colour board = member (kingIdx colour board) . threatening board $ other c
 
 
 -- moves without checking if they would reveal check
-rawMoves :: Board -> (Int, Int) -> [(Int, Int)]
-rawMoves board (x, y) =
+rawMoves :: Board -> Bool -> (Int, Int) -> [(Int, Int)]
+rawMoves board noCastle (x, y) =
   pieceMoves (x, y) colour board
   where
     Piece _ colour man = board ! (y, x)
     pieceMoves = case man of
       Horsey -> horseyMoves
-      King   -> kingMoves
+      King   -> kingMoves noCastle
       Pawn   -> pawnMoves
-      Rook   -> rookMoves
+      Rook   -> rookMoves noCastle
       Bishop -> bishopMoves
       Queen  -> queenMoves
 
 moves :: Board -> (Int, Int) -> [(Int, Int)]
-moves board (x, y) = filter noCheck $ rawMoves board (x, y)
+moves board (x, y) = filter noCheck $ rawMoves board False (x, y)
   where
     noCheck (eX, eY) = not . check c . fst $ move (x, y) (eX, eY) board
     c = colour $ board ! (y, x)
@@ -284,12 +286,11 @@ moves board (x, y) = filter noCheck $ rawMoves board (x, y)
 checkWin :: World -> World
 checkWin world =
   if noMoves
-    then world { gameState = if check colour b then colourToWin $ other colour else Draw }
+    then world { gameState = if check world.turn b then colourToWin $ other world.turn else Draw }
     else world
   where
-    colour = world.turn
     b = world.board
-    noMoves = null . fold $ moves b <$> side colour b
+    noMoves = null . fold $ moves b <$> side world.turn b
 
 toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
 toPromotingSquare (pX, pY) (x, y) =

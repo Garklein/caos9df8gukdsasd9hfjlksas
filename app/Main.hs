@@ -202,7 +202,7 @@ pawnMoves lastMove (x, y) colour board = enPassant diagL <> enPassant diagR <> n
     cases = [ ((x,   y+dir),   (Empty ==))
             , ((x,   y+dir*2), (nMoves == 0 &&) . (Empty ==))
             , (diagL,          isCol $ other colour)
-            , (diagL,          isCol $ other colour)
+            , (diagR,          isCol $ other colour)
             ]
     diagL = (x-1, y+dir)
     diagR = (x+1, y+dir)
@@ -424,13 +424,12 @@ home = [Rook, Horsey, Bishop, King, Queen, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $
- [ Piece 0 Black King, Piece 0 White Pawn] <> replicate 60 Empty <> [Piece 0 White King, Piece 0 White Pawn]
- -- fold [ Piece 0 Black <$> home
- --      , replicate 8 $ Piece 0 Black Pawn
- --      , replicate 32 Empty
- --      , replicate 8 $ Piece 0 White Pawn
- --      , Piece 0 White <$> home
- --      ]
+  fold [ Piece 0 Black <$> home
+       , replicate 8 $ Piece 0 Black Pawn
+       , replicate 32 Empty
+       , replicate 8 $ Piece 0 White Pawn
+       , Piece 0 White <$> home
+       ]
 
 imgNames :: [String]
 imgNames = liftA2 twoArray "kqrnbp" "dl"

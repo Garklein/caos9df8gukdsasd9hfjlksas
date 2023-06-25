@@ -414,7 +414,7 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
     isPawn = \case
       Piece { man = Pawn } -> True
       _                    -> False
-normalEvent (EventKey (Char 'z') _ _ _) = do
+normalEvent (EventKey (Char 'z') Down Modifiers { alt = Down } _) = do
   turn <- use #turn
   board <- use #board
   let notQK p = p.man /= King && p.man /= Queen
@@ -431,8 +431,8 @@ events event world =
     _                              -> execState (normalEvent event) world
   where
     resize = case event of
-      (EventResize _) -> True
-      _                     -> False
+      EventResize _ -> True
+      _             -> False
 
 
 home :: [Chessman]

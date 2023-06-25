@@ -86,7 +86,7 @@ drawBoard imgs world = Pictures . fold $ liftA2 draw [0..7] [0..7]
 
     getImg x y = case world.board ! (y, x) of
                    Empty -> Blank
-                   p     -> imgs M.! (p { nMoves = 0 })
+                   p     -> imgs M.! p { nMoves = 0 }
     baseImg x y = (if Just (x, y) == world.selected then Scale 1.2 1.2 else id) $ getImg x y
     img     x y cX cY = Translate (cX + q/8) (cY + q/8) $ baseImg x y
     tile    x y cX cY = colour x y . Polygon $ square cX cY (q/4)
@@ -259,11 +259,11 @@ bishopMoves = linesMoves [(1, 1), (-1, 1), (-1, -1), (1, -1)]
 queenMoves :: GetMoves
 queenMoves = linesMoves . filter (/= (0, 0)) $ liftA2 (,) [-1..1] [-1..1]
 
-side :: Colour -> Board -> [(Int, Int)]
-side colour board = [coords | coords <- indices board, isCol colour $ board ! swap coords]
+side :: Board -> Colour -> [(Int, Int)]
+side board colour = [coords | coords <- indices board, isCol colour $ board ! swap coords]
 
 threatening :: Board -> Colour -> Set (Int, Int)
-threatening board colour = unions $ fromList . rawMoves (8, 8) board True <$> side colour board
+threatening board colour = unions $ fromList . rawMoves (8, 8) board True <$> side board colour
 
 kingIdx :: Colour -> Board -> (Int, Int)
 kingIdx colour board = fromJust . find isKing $ indices board
@@ -314,12 +314,27 @@ gameToString world = toStringC world.turn <> (fold $ toString <$> elems world.bo
       Bishop -> "b"
       Rook   -> "r"
 
+insufficient :: Board -> Bool
+insufficient board = member sidesSet insufficients || bishopsSameColours
+  where
+    bishopsSameColours = sidesSet == kingsBishops && bishopColour Black == bishopColour White
+    bishopColour c     = even . uncurry (+) . head $ filter (/= kingIdx c board) $ side board c
+    kingsBishops       = fromList . replicate 2 $ fromList [King, Bishop]
+
+    sidesSet      = fromList [sideSet White, sideSet Black]
+    sideSet       = fromList . (man . (board !) . swap <$>) . side board
+    insufficients = fromList
+      [ fromList [singleton King, singleton King]
+      , fromList [singleton King, fromList [King, Bishop]]
+      , fromList [singleton King, fromList [King, Horsey]]
+      ]
+
 checkWin :: State World ()
 checkWin = do
   World { board, lastMove, turn, fiftyMove } <- get
 
   --checkmate/stalemate
-  let noMoves = null . fold $ moves (fromJust lastMove) board <$> side turn board
+  let noMoves = null . fold $ moves (fromJust lastMove) board <$> side board turn
   when noMoves $
     #gameState .= if check turn board then colourToWin $ other turn else Draw
 
@@ -331,9 +346,11 @@ checkWin = do
   poses <- use #positions
   when (poses M.! pos == 3) $ #gameState .= Draw
 
-
   -- 50 move rule
   when (fiftyMove == 100) $ #gameState .= Draw
+
+  -- insufficient material
+  when (insufficient board) $ #gameState .= Draw
 
 toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
 toPromotingSquare (pX, pY) (x, y) =
@@ -402,7 +419,7 @@ normalEvent (EventKey (Char 'z') _ _ _) = do
   turn <- use #turn
   board <- use #board
   let notQK p = p.man /= King && p.man /= Queen
-  let pieces = filter (notQK . (board !) . swap) $ side turn board
+  let pieces = filter (notQK . (board !) . swap) $ side board turn
   when (not $ null pieces) $ #board %= insert (swap $ head pieces) (Piece 0 turn Queen)
 normalEvent (EventResize dims) = #dims .= dims
 normalEvent _ = pure ()

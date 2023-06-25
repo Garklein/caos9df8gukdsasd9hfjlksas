@@ -401,16 +401,15 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
         #lastMove ?= highlight
         let pawn = isPawn $ newBoard ! (y, x)
 
-        turn <- use #turn
-        if not $ pawn || (isCol (other turn) $ board ! (y, x))
-          then #fiftyMove += 1
-          else #fiftyMove .= 0
-        checkWin
-
         if elem y [0, 7] && pawn
           then #gameState .= Promoting click
           else #turn      %= other
 
+        turn <- use #turn
+        if not $ pawn || (isCol turn $ board ! (y, x))
+          then #fiftyMove += 1
+          else #fiftyMove .= 0
+        checkWin
       pure good
     isPawn = \case
       Piece { man = Pawn } -> True

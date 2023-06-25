@@ -462,7 +462,7 @@ main = do
 
   let factor     = q/4 / (fromIntegral . fst $ bmpDimensions bmp) -- it's a square.
       scaledImgs = Scale factor factor <$> imgs
-      w          = round $ q*2
+      w          = (round $ q*2) + 200
       dims       = (w, w)
       window     = InWindow "caos9df8gukdsasd9hfjlksas!!!" dims (10, 10)
       world      = World { board     = start

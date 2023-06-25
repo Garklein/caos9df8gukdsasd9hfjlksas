@@ -68,6 +68,7 @@ data World = World
   , dims      :: (Int, Int)
   , gameState :: GameState
   , positions :: M.Map String Int -- number of times positions have occured
+  , fiftyMove :: Int              -- number of turns since both sides has captured/moved a pawn (so 100 for 50 moves)
   }
   deriving Generic
 
@@ -177,11 +178,11 @@ move s@(sX, sY) e@(eX, eY) board =
       let (castledK, castledR) = castleCoords rook in
       (castledK, rawMove rook castledR $ rawMove king castledK board)
     normalMove = (e, rawMove s e board)
-    Piece { man = man, colour = colour} = board ! swap s
+    Piece { man, colour } = board ! swap s
 
 isCol :: Colour -> Piece -> Bool
 isCol c = \case
-  Piece _ pC _ | pC == c -> True
+  Piece { colour } | colour == c -> True
   _ -> False
 
 notCol :: Board -> Colour -> (Int, Int) -> Bool
@@ -196,7 +197,7 @@ pawnMoves lastMove (x, y) colour board = enPassant diagL <> enPassant diagR <> n
       where otherPawn = (- dir) <$> diag
     moved2Pawn coords = case lookup (swap coords) board of
       Just Piece { man = Pawn, nMoves = 1, colour = c } | c == other colour -> True
-      _                                                                -> False
+      _                                                                     -> False
     normalMoves = [p | (p, f) <- cases, maybe False f $ lookup (swap p) board]
     cases = [ ((x,   y+dir),   (Empty ==))
             , ((x,   y+dir*2), (nMoves == 0 &&) . (Empty ==))
@@ -206,7 +207,7 @@ pawnMoves lastMove (x, y) colour board = enPassant diagL <> enPassant diagR <> n
     diagL = (x-1, y+dir)
     diagR = (x+1, y+dir)
     dir = if colour == Black then 1 else -1
-    Piece nMoves _ _ = board ! (y, x)
+    Piece { nMoves } = board ! (y, x)
 
 canCastle :: (Int, Int) -> Colour -> Board -> Bool
 canCastle (rX, rY) colour board =
@@ -281,7 +282,7 @@ rawMoves :: (Int, Int) -> Board -> Bool -> (Int, Int) -> [(Int, Int)]
 rawMoves lastMove board noCastle (x, y) =
   pieceMoves (x, y) colour board
   where
-    Piece _ colour man = board ! (y, x)
+    Piece { colour, man } = board ! (y, x)
     pieceMoves = case man of
       Horsey -> horseyMoves
       King   -> kingMoves noCastle
@@ -315,17 +316,24 @@ gameToString world = toStringC world.turn <> (fold $ toString <$> elems world.bo
 
 checkWin :: State World ()
 checkWin = do
-  World board _ lastMove turn _ _ _ <- get
+  World { board, lastMove, turn, fiftyMove } <- get
+
+  --checkmate/stalemate
   let noMoves = null . fold $ moves (fromJust lastMove) board <$> side turn board
   when noMoves $
     #gameState .= if check turn board then colourToWin $ other turn else Draw
 
+  -- draw by repetition
+  -- NB. i'm not checking if castling/en passant rights are the same because that's some pedantic nerd stuff
+  -- (and i'm too lazy to)
   pos <- gets gameToString
   #positions %= M.insertWith (+) pos 1
   poses <- use #positions
-  when (poses M.! pos == 3) $ #gameState .= Draw -- draw by repetition
-  -- NB. i'm not checking if castling/en passant rights are the same because that's some pedantic nerd stuff
-  -- (and i'm too lazy to)
+  when (poses M.! pos == 3) $ #gameState .= Draw
+
+
+  -- 50 move rule
+  when (fiftyMove == 100) $ #gameState .= Draw
 
 toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
 toPromotingSquare (pX, pY) (x, y) =
@@ -345,7 +353,7 @@ eventWhilePromoting world = \case
              }
   _ -> world
   where
-    World { board = board, turn = turn, gameState = Promoting (x, y) } = world
+    World { board, turn, gameState = Promoting (x, y) } = world
 
 toSquare :: Float -> Maybe Int
 toSquare s = if elem c [0..7] then Just c else Nothing
@@ -353,7 +361,7 @@ toSquare s = if elem c [0..7] then Just c else Nothing
 
 normalEvent :: Event -> State World ()
 normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, toSquare -> Just y)) = do
-  World board selected _ turn _ _ _ <- get
+  World { board, selected, turn } <- get
   let click = (x, y)
   case (keyState, selected) of
     (Down, Nothing) -> selectIfValid board turn click
@@ -364,7 +372,7 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
     _ -> pure ()
   where
     selectIfValid board turn click = case board ! swap click of
-      Piece _ colour _ | colour == turn -> #selected ?= click
+      Piece { colour } | colour == turn -> #selected ?= click
       _ -> pure ()
     moveIfValid board click selection = do
       #selected .= Nothing
@@ -374,10 +382,18 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
         let (highlight, newBoard) = move selection click board
         #board    .= newBoard
         #lastMove ?= highlight
-        if elem y [0, 7] && isPawn (newBoard ! swap click)
+        let pawn = isPawn $ newBoard ! (y, x)
+
+        turn <- use #turn
+        if not $ pawn || (isCol (other turn) $ board ! (y, x))
+          then #fiftyMove += 1
+          else #fiftyMove .= 0
+        checkWin
+
+        if elem y [0, 7] && pawn
           then #gameState .= Promoting click
           else #turn      %= other
-        checkWin
+
       pure good
     isPawn = \case
       Piece { man = Pawn } -> True
@@ -408,12 +424,13 @@ home = [Rook, Horsey, Bishop, King, Queen, Bishop, Horsey, Rook]
 
 start :: Board
 start = lazyGridMap (rectOctGrid 8 8) $
-  fold [ Piece 0 Black <$> home
-       , replicate 8 $ Piece 0 Black Pawn
-       , replicate 32 Empty
-       , replicate 8 $ Piece 0 White Pawn
-       , Piece 0 White <$> home
-       ]
+ [ Piece 0 Black King, Piece 0 White Pawn] <> replicate 60 Empty <> [Piece 0 White King, Piece 0 White Pawn]
+ -- fold [ Piece 0 Black <$> home
+ --      , replicate 8 $ Piece 0 Black Pawn
+ --      , replicate 32 Empty
+ --      , replicate 8 $ Piece 0 White Pawn
+ --      , Piece 0 White <$> home
+ --      ]
 
 imgNames :: [String]
 imgNames = liftA2 twoArray "kqrnbp" "dl"
@@ -440,6 +457,7 @@ main = do
                          , dims      = dims
                          , gameState = Ongoing
                          , positions = M.fromList [(gameToString world, 1)]
+                         , fiftyMove = 0
                          }
 
   play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const

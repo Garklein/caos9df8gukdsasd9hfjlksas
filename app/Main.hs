@@ -69,6 +69,7 @@ data World = World
   , gameState :: GameState
   , positions :: M.Map String Int -- number of times positions have occured
   , fiftyMove :: Int              -- number of turns since both sides has captured/moved a pawn (so 100 for 50 moves)
+  , legal     :: Bool
   }
   deriving Generic
 
@@ -263,10 +264,10 @@ side :: Board -> Colour -> [(Int, Int)]
 side board colour = [coords | coords <- indices board, isCol colour $ board ! swap coords]
 
 threatening :: Board -> Colour -> Set (Int, Int)
-threatening board colour = unions $ fromList . rawMoves (8, 8) board True <$> side board colour
+threatening board colour = unions $ fromList . rawMoves True (8, 8) board True <$> side board colour
 
 kingIdx :: Colour -> Board -> (Int, Int)
-kingIdx colour board = fromJust . find isKing $ indices board
+kingIdx colour board = fromMaybe (0, 0) . find isKing $ indices board
   where
     isKing coords = case (board ! swap coords) of
       Piece { colour = c, man = King } | c == colour -> True
@@ -278,21 +279,21 @@ check colour board = member (kingIdx colour board) . threatening board $ other c
 
 
 -- moves without checking if they would reveal check
-rawMoves :: (Int, Int) -> Board -> Bool -> (Int, Int) -> [(Int, Int)]
-rawMoves lastMove board noCastle (x, y) =
-  pieceMoves (x, y) colour board
+rawMoves :: Bool -> (Int, Int) -> Board -> Bool -> (Int, Int) -> [(Int, Int)]
+rawMoves legal lastMove board noCastle (x, y) =
+  if legal || man == Horsey then pieceMoves (x, y) colour board else []
   where
     Piece { colour, man } = board ! (y, x)
     pieceMoves = case man of
-      Horsey -> horseyMoves
       King   -> kingMoves noCastle
       Pawn   -> pawnMoves lastMove
       Rook   -> rookMoves noCastle
       Bishop -> bishopMoves
       Queen  -> queenMoves
+      Horsey -> horseyMoves
 
-moves :: (Int, Int) -> Board -> (Int, Int) -> [(Int, Int)]
-moves lastMove board (x, y) = filter noCheck $ rawMoves lastMove board False (x, y)
+moves :: Bool -> (Int, Int) -> Board -> (Int, Int) -> [(Int, Int)]
+moves legal lastMove board (x, y) = filter noCheck $ rawMoves legal lastMove board False (x, y)
   where
     noCheck (eX, eY) = not . check c . snd $ move (x, y) (eX, eY) board
     c = colour $ board ! (y, x)
@@ -334,7 +335,7 @@ checkWin = do
   World { board, lastMove, turn, fiftyMove } <- get
 
   --checkmate/stalemate
-  let noMoves = null . fold $ moves (fromJust lastMove) board <$> side board turn
+  let noMoves = null . fold $ moves True (fromMaybe (0, 0) lastMove) board <$> side board turn
   when noMoves $
     #gameState .= if check turn board then colourToWin $ other turn else Draw
 
@@ -352,6 +353,15 @@ checkWin = do
   -- insufficient material
   when (insufficient board) $ #gameState .= Draw
 
+  -- no kings (to not crash with custom positions)
+  let kings = colour <$> (filter isKing $ elems board)
+  when (null kings)        $ #gameState .= Draw
+  when (length kings == 1) $ #gameState .= colourToWin (head kings)
+  where
+    isKing = \case
+      Piece { man = King } -> True
+      _                    -> False
+
 toPromotingSquare :: (Int, Int) -> (Float, Float) -> Maybe Int
 toPromotingSquare (pX, pY) (x, y) =
   if y < blY || blY + q/4 < y || notElem xSquare [0..3]
@@ -364,12 +374,15 @@ toPromotingSquare (pX, pY) (x, y) =
 eventWhilePromoting :: World -> Event -> World
 eventWhilePromoting world = \case
   (EventKey (MouseButton LeftButton) Down _ (toPromotingSquare (x, y) -> Just choice))
-    -> world { board     = insert (y, x) (Piece 0 turn (promotingPieces !! choice)) board
-             , turn      = other turn
+    -> world { board     = newBoard $ promotingPieces !! choice
+             , turn      = if illegal choice then turn else other turn
              , gameState = Ongoing
+             , legal     = not $ illegal choice
              }
   _ -> world
   where
+    illegal choice = choice == 1 && (not . null $ moves True (8, 8) (newBoard Horsey) (x, y))
+    newBoard p = insert (y, x) (Piece 0 turn p) board
     World { board, turn, gameState = Promoting (x, y) } = world
 
 toSquare :: Float -> Maybe Int
@@ -394,11 +407,13 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
     moveIfValid board click selection = do
       #selected .= Nothing
       lastMove <- use #lastMove
-      let good = elem click $ moves (fromMaybe (8, 8) lastMove) board selection
+      legal <- use #legal
+      let good = elem click $ moves legal (fromMaybe (8, 8) lastMove) board selection
       when good do
         let (highlight, newBoard) = move selection click board
         #board    .= newBoard
         #lastMove ?= highlight
+        #legal    .= True
         let pawn = isPawn $ newBoard ! (y, x)
 
         if elem y [0, 7] && pawn
@@ -406,7 +421,7 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
           else #turn      %= other
 
         turn <- use #turn
-        if not $ pawn || (isCol turn $ board ! (y, x))
+        if not pawn || (isCol turn $ board ! (y, x))
           then #fiftyMove += 1
           else #fiftyMove .= 0
         checkWin
@@ -414,6 +429,7 @@ normalEvent (EventKey (MouseButton LeftButton) keyState _ (toSquare -> Just x, t
     isPawn = \case
       Piece { man = Pawn } -> True
       _                    -> False
+
 normalEvent (EventKey (Char 'z') Down Modifiers { alt = Down } _) = do
   turn <- use #turn
   board <- use #board
@@ -473,6 +489,7 @@ main = do
                          , gameState = Ongoing
                          , positions = M.fromList [(gameToString world, 1)]
                          , fiftyMove = 0
+                         , legal     = True
                          }
 
-  play window white 0 world (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const
+  play window white 0 (execState checkWin world) (convert . M.fromList $ zip pieceOrder scaledImgs) events $ flip const
